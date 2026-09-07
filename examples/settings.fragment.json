@@ -1,0 +1,9 @@
+{
+  "providers": {
+    "my-new-api": {
+      "adapter": "new-api",
+      "quotaPerUnit": 500000,
+      "currency": "USD"
+    }
+  }
+}
