@@ -1,6 +1,6 @@
 {
   "name": "pi-quota-bar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Composable quota bar with independent Codex and Kimi query adapters",
   "keywords": ["pi-package"],
