@@ -127,7 +127,8 @@ test('account access denied never falls back to another credential; 404 falls th
   calls = 0;
   await assert.rejects(createNewApiAdapter('my-gateway').query(context({ getJson: async url => {
     calls++;
-    throw new QuotaError(url.endsWith('/api/usage/token/') ? 'http' : 'auth');
+    if (url.endsWith('/api/usage/token/')) throw new QuotaError('http');
+    throw new QuotaError('auth');
   } })), error => error instanceof QuotaError && error.code === 'account-access');
   assert.equal(calls, 3); // subscription + usage fired in parallel
   await assert.rejects(createNewApiAdapter('my-gateway').query(context({ getAuth: async () => undefined,
@@ -138,6 +139,21 @@ test('account access denied never falls back to another credential; 404 falls th
   await assert.rejects(createNewApiAdapter('my-gateway').query(context({ signal: abort.signal,
     getJson: async () => assert.fail('No HTTP after abort'),
   })));
+});
+
+test('an unlimited key quota falls through to billing for a finite account balance', async () => {
+  let calls = 0;
+  const result = await createNewApiAdapter('my-gateway').query(context({ getJson: async url => {
+    calls++;
+    if (url.endsWith('/api/usage/token/')) {
+      return { code: true, data: { object: 'token_usage', total_used: 100, total_available: 0, unlimited_quota: true } };
+    }
+    if (url.endsWith('/subscription')) return { hard_limit_usd: 3432 };
+    return { total_usage: 339958.0938 };
+  } }));
+  assert.equal(calls, 3);
+  assert.ok(result.balance && Math.abs(result.balance.remaining - 32.42) < 0.01);
+  assert.ok(result.balance && Math.abs(result.balance.used - 3399.58) < 0.01);
 });
 
 test('snapshots may contain amounts without windows; malformed balances are rejected', () => {

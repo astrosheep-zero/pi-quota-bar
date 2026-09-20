@@ -79,29 +79,36 @@ export function createNewApiAdapter(provider: string, options: NewApiOptions = {
       if (!auth) throw new QuotaError('auth');
       const root = newApiRootUrl(auth.baseUrl);
       const headers = { Authorization: `Bearer ${bearer(auth)}` };
-      // 1. Per-token usage: native sk- support, exact remaining quota.
+      // 1. Per-token usage: native sk- support. A finite key quota is the most
+      // precise answer; an unlimited key still needs billing for a real balance.
+      let tokenBalance: AccountBalance | null = null;
       try {
         const payload = await context.getJson(`${root}/api/usage/token/`, headers, context.signal);
-        const balance = parseNewApiTokenUsage(payload, settings);
-        if (balance) return { windows: [], balance, fetchedAt: context.now() };
+        const parsed = parseNewApiTokenUsage(payload, settings);
+        if (parsed && parsed.unlimited !== true) return { windows: [], balance: parsed, fetchedAt: context.now() };
+        tokenBalance = parsed; // null (endpoint absent) or unlimited
       } catch (error) {
         // 404 means the deployment predates the endpoint: fall through to billing.
         if (error instanceof QuotaError && error.code === 'http') { /* fall through */ }
         else if (error instanceof QuotaError && error.code === 'auth') throw new QuotaError('account-access');
         else throw error;
       }
-      // 2. Account billing: one-api compatible; many deployments accept an sk- key.
-      let pair: [unknown, unknown];
+      // 2. Account billing: one-api legacy; many deployments accept an sk- key.
+      // A finite hard limit beats an unlimited key quota — that is the real balance.
       try {
-        pair = await Promise.all([
+        const pair = await Promise.all([
           context.getJson(`${root}/v1/dashboard/billing/subscription`, headers, context.signal),
           context.getJson(`${root}/v1/dashboard/billing/usage?start_date=2020-01-01&end_date=2100-01-01`, headers, context.signal),
         ]);
+        return { windows: [], balance: parseNewApiBilling(pair[0], pair[1], settings), fetchedAt: context.now() };
       } catch (error) {
+        // Billing absent but the token already told us its quota: show that.
+        if (tokenBalance && error instanceof QuotaError && error.code === 'http') {
+          return { windows: [], balance: tokenBalance, fetchedAt: context.now() };
+        }
         if (error instanceof QuotaError && error.code === 'auth') throw new QuotaError('account-access');
         throw error;
       }
-      return { windows: [], balance: parseNewApiBilling(pair[0], pair[1], settings), fetchedAt: context.now() };
     },
   };
 }
