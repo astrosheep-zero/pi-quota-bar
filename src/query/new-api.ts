@@ -79,36 +79,38 @@ export function createNewApiAdapter(provider: string, options: NewApiOptions = {
       if (!auth) throw new QuotaError('auth');
       const root = newApiRootUrl(auth.baseUrl);
       const headers = { Authorization: `Bearer ${bearer(auth)}` };
-      // 1. Per-token usage: native sk- support. A finite key quota is the most
-      // precise answer; an unlimited key still needs billing for a real balance.
-      let tokenBalance: AccountBalance | null = null;
-      try {
-        const payload = await context.getJson(`${root}/api/usage/token/`, headers, context.signal);
-        const parsed = parseNewApiTokenUsage(payload, settings);
-        if (parsed && parsed.unlimited !== true) return { windows: [], balance: parsed, fetchedAt: context.now() };
-        tokenBalance = parsed; // null (endpoint absent) or unlimited
-      } catch (error) {
-        // 404 means the deployment predates the endpoint: fall through to billing.
-        if (error instanceof QuotaError && error.code === 'http') { /* fall through */ }
-        else if (error instanceof QuotaError && error.code === 'auth') throw new QuotaError('account-access');
-        else throw error;
-      }
-      // 2. Account billing: one-api legacy; many deployments accept an sk- key.
-      // A finite hard limit beats an unlimited key quota — that is the real balance.
+      // 1. Account billing (one-api legacy): a finite hard limit is the real
+      // account balance. 1e8 means unlimited — then the key quota may still
+      // be finite and more precise.
+      let billingBalance: AccountBalance | null = null;
       try {
         const pair = await Promise.all([
           context.getJson(`${root}/v1/dashboard/billing/subscription`, headers, context.signal),
           context.getJson(`${root}/v1/dashboard/billing/usage?start_date=2020-01-01&end_date=2100-01-01`, headers, context.signal),
         ]);
-        return { windows: [], balance: parseNewApiBilling(pair[0], pair[1], settings), fetchedAt: context.now() };
+        const billing = parseNewApiBilling(pair[0], pair[1], settings);
+        if (billing.unlimited !== true) return { windows: [], balance: billing, fetchedAt: context.now() };
+        billingBalance = billing;
       } catch (error) {
-        // Billing absent but the token already told us its quota: show that.
-        if (tokenBalance && error instanceof QuotaError && error.code === 'http') {
-          return { windows: [], balance: tokenBalance, fetchedAt: context.now() };
+        // 404: deployment has no billing pair. 401: try the key-native endpoint
+        // below — some deployments accept sk- only there.
+        if (error instanceof QuotaError && (error.code === 'http' || error.code === 'auth')) { /* fall through */ }
+        else throw error;
+      }
+      // 2. Per-token usage (new-api ≥ v0.9.0-alpha.8): native sk- support.
+      try {
+        const payload = await context.getJson(`${root}/api/usage/token/`, headers, context.signal);
+        const parsed = parseNewApiTokenUsage(payload, settings);
+        if (parsed) return { windows: [], balance: parsed, fetchedAt: context.now() };
+      } catch (error) {
+        if (billingBalance && error instanceof QuotaError && error.code === 'http') {
+          return { windows: [], balance: billingBalance, fetchedAt: context.now() };
         }
         if (error instanceof QuotaError && error.code === 'auth') throw new QuotaError('account-access');
         throw error;
       }
+      if (billingBalance) return { windows: [], balance: billingBalance, fetchedAt: context.now() };
+      throw new QuotaError('schema');
     },
   };
 }

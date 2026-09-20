@@ -18,12 +18,13 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
   const entries: { type: string; data: UsageCard }[] = [];
   const renderers = new Map<string, unknown>();
   let requests = 0;
+  let lastUrl = '';
   const originalFetch = globalThis.fetch;
   let respond: () => Promise<Response> = async () => new Response(JSON.stringify({
     usage: { limit: 100, used: 15, resetTime: '2099-01-01T00:00:00Z' },
     limits: [{ window: { duration: 5, timeUnit: 'TIME_UNIT_HOUR' }, detail: { limit: 100, used: 28 } }],
   }));
-  globalThis.fetch = async () => { requests++; return respond(); };
+  globalThis.fetch = async (input: unknown) => { requests++; lastUrl = String(input); return respond(); };
   const pi = {
     on: (name: string, handler: Handler) => handlers.set(name, handler),
     registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => commands.set(name, command),
@@ -47,6 +48,7 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
   return {
     ctx, ui, statuses, commands, emitted, entries, renderers,
     requests: () => requests,
+    lastUrl: () => lastUrl,
     respondWith: (responder: () => Promise<Response>) => { respond = responder; },
     emit: (name: string, event: unknown = {}) => handlers.get(name)?.(event, ctx),
     cleanup: () => {
@@ -143,9 +145,9 @@ test('new-api works through Pi auth, controller, footer and persistent /usage it
   const model = h.ctx.model! as { provider: string; baseUrl: string };
   model.provider = 'my-gateway';
   model.baseUrl = 'https://gateway.test/v1';
-  h.respondWith(async () => new Response(JSON.stringify({
-    code: true, message: 'ok', data: { object: 'token_usage', total_used: 28390000, total_available: 6170000 },
-  })));
+  h.respondWith(async () => new Response(JSON.stringify(h.lastUrl().endsWith('/subscription')
+    ? { object: 'billing_subscription', hard_limit_usd: 69.12 }
+    : { object: 'list', total_usage: 5678 })));
   h.emit('session_start');
   await tick();
   assert.equal(h.statuses.at(-1), 'Bal $12.34 ');

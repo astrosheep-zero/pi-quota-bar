@@ -90,14 +90,14 @@ Only the global settings namespace is used. Project-local settings are deliberat
 
 The adapter queries with the provider's own API key:
 
-1. **GET `{root}/api/usage/token/`** (new-api ≥ v0.9.0-alpha.8) — designed for API keys: returns the key's own granted/used/remaining quota. A **finite** key quota is shown directly. `root` is the base URL without a trailing `/v1`/`/v1beta`:
+1. **GET `{root}/v1/dashboard/billing/subscription` + `/usage`** (one-api legacy) — `hard_limit_usd - total_usage/100` is the account balance; `total_usage` is in cents. A `hard_limit_usd` of 1e8 means an unlimited quota; then the key quota below may still be finite.
+
+2. **GET `{root}/api/usage/token/`** (new-api ≥ v0.9.0-alpha.8) — designed for API keys: returns the key's own granted/used/remaining quota, used when billing is absent (404), rejects the key (401) or reports an unlimited account. `root` is the base URL without a trailing `/v1`/`/v1beta`:
 
 ```text
 https://host/v1          -> https://host/api/usage/token/
 https://host/gateway/v1  -> https://host/gateway/api/usage/token/
 ```
-
-2. **GET `{root}/v1/dashboard/billing/subscription` + `/usage`** (one-api legacy, older deployments, or when the key quota is unlimited) — `hard_limit_usd - total_usage/100` is the balance; `total_usage` is in cents. A `hard_limit_usd` of 1e8 means an unlimited quota, shown as `∞`. A finite account limit beats an unlimited key quota: that is the real remaining balance.
 
 `/api/user/self` is not used: it only accepts account session tokens and rejects API keys (401) on every tested deployment.
 

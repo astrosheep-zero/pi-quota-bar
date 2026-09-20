@@ -81,7 +81,7 @@ test('URL derivation stays on the configured origin, handles /v1 and subpath ins
   }
 });
 
-test('new-api uses only the selected provider auth and makes exactly one /api/usage/token/ request', async () => {
+test('new-api queries billing first and a finite hard limit wins without token lookup', async () => {
   let authCalls = 0;
   let calls = 0;
   const signal = new AbortController().signal;
@@ -93,44 +93,43 @@ test('new-api uses only the selected provider auth and makes exactly one /api/us
     },
     getJson: async (url, headers, passedSignal) => {
       calls++;
-      assert.equal(url, 'https://gateway.test/api/usage/token/');
+      assert.ok(url === 'https://gateway.test/v1/dashboard/billing/subscription'
+        || url.startsWith('https://gateway.test/v1/dashboard/billing/usage?'));
       assert.deepEqual(headers, { Authorization: 'Bearer runtime-key' });
       assert.equal(passedSignal, signal);
-      return payload;
+      return url.endsWith('/subscription') ? { hard_limit_usd: 100 } : { total_usage: 5678 };
     },
   }));
   assert.equal(authCalls, 1);
-  assert.equal(calls, 1);
-  assert.deepEqual(result, { windows: [], balance, fetchedAt: 100000 });
+  assert.equal(calls, 2); // subscription + usage in parallel, no token request
+  assert.deepEqual(result, { windows: [], balance: { currency: 'USD', remaining: 43.22, used: 56.78 }, fetchedAt: 100000 });
   assert.equal(JSON.stringify(result).includes('runtime-key'), false);
 });
 
-test('account access denied never falls back to another credential; 404 falls through to billing', async () => {
+test('billing 404/absent falls through to the token endpoint; auth denial maps to account-access', async () => {
   let calls = 0;
   await assert.rejects(createNewApiAdapter('my-gateway').query(context({ getJson: async url => {
     calls++;
+    if (url.includes('/dashboard/billing/')) throw new QuotaError('auth');
     assert.ok(url.endsWith('/api/usage/token/'));
     throw new QuotaError('auth');
   } })), error => error instanceof QuotaError && error.code === 'account-access');
-  assert.equal(calls, 1);
+  assert.equal(calls, 3); // 2 billing + 1 token
   calls = 0;
-  const billing = { sub: { hard_limit_usd: 100 }, used: { total_usage: 500 } };
   const result = await createNewApiAdapter('my-gateway').query(context({ getJson: async url => {
     calls++;
-    if (url.endsWith('/api/usage/token/')) throw new QuotaError('http'); // endpoint absent
-    if (url.endsWith('/subscription')) return billing.sub;
-    assert.ok(url.includes('/v1/dashboard/billing/usage?'));
-    return billing.used;
+    if (url.includes('/dashboard/billing/')) throw new QuotaError('http'); // billing absent
+    assert.ok(url.endsWith('/api/usage/token/'));
+    return payload;
   } }));
   assert.equal(calls, 3);
-  assert.deepEqual(result.balance, { currency: 'USD', remaining: 95, used: 5 });
+  assert.deepEqual(result.balance, balance);
   calls = 0;
-  await assert.rejects(createNewApiAdapter('my-gateway').query(context({ getJson: async url => {
+  await assert.rejects(createNewApiAdapter('my-gateway').query(context({ getJson: async () => {
     calls++;
-    if (url.endsWith('/api/usage/token/')) throw new QuotaError('http');
-    throw new QuotaError('auth');
-  } })), error => error instanceof QuotaError && error.code === 'account-access');
-  assert.equal(calls, 3); // subscription + usage fired in parallel
+    throw new QuotaError('http');
+  } })), error => error instanceof QuotaError && error.code === 'http');
+  assert.equal(calls, 3);
   await assert.rejects(createNewApiAdapter('my-gateway').query(context({ getAuth: async () => undefined,
     getJson: async () => assert.fail('No HTTP without auth'),
   })), QuotaError);
@@ -141,19 +140,17 @@ test('account access denied never falls back to another credential; 404 falls th
   })));
 });
 
-test('an unlimited key quota falls through to billing for a finite account balance', async () => {
+test('unlimited billing falls through to a finite key quota', async () => {
   let calls = 0;
   const result = await createNewApiAdapter('my-gateway').query(context({ getJson: async url => {
     calls++;
-    if (url.endsWith('/api/usage/token/')) {
-      return { code: true, data: { object: 'token_usage', total_used: 100, total_available: 0, unlimited_quota: true } };
-    }
-    if (url.endsWith('/subscription')) return { hard_limit_usd: 3432 };
-    return { total_usage: 339958.0938 };
+    if (url.endsWith('/subscription')) return { hard_limit_usd: 100000000 };
+    if (url.includes('/dashboard/billing/usage')) return { total_usage: 152.553 };
+    assert.ok(url.endsWith('/api/usage/token/'));
+    return payload;
   } }));
   assert.equal(calls, 3);
-  assert.ok(result.balance && Math.abs(result.balance.remaining - 32.42) < 0.01);
-  assert.ok(result.balance && Math.abs(result.balance.used - 3399.58) < 0.01);
+  assert.deepEqual(result.balance, balance);
 });
 
 test('snapshots may contain amounts without windows; malformed balances are rejected', () => {
