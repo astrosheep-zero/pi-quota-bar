@@ -12,6 +12,7 @@ export interface AccountBalance {
   currency: string; // ISO-style currency code, e.g. USD
   remaining: number; // may be negative (debt); not a periodic allowance
   used: number;
+  unlimited?: boolean; // provider granted no finite cap; ignore remaining
 }
 
 export interface QuotaSnapshot {

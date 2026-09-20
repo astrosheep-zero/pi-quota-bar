@@ -79,7 +79,10 @@ export class QuotaController {
     const generation = this.generation;
     const abort = new AbortController();
     const active = () => this.generation === generation && this.request?.abort === abort;
-    this.publish({ kind: 'loading', provider: adapter.provider, label: adapter.label });
+    // Keep the last result visible during refresh; selection already clears it.
+    if (this.state.kind !== 'ready' && this.state.kind !== 'loading') {
+      this.publish({ kind: 'loading', provider: adapter.provider, label: adapter.label });
+    }
     const deadline = setTimeout(() => abort.abort(new QuotaError('timeout')), this.timeout);
     const promise = Promise.resolve().then(async () => {
       try {

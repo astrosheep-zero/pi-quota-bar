@@ -11,6 +11,7 @@ import type { ProviderAuth, QuotaAdapter } from './query/types.ts';
 
 export const STATUS_EVENT = 'quota-bar:state:v1';
 const STATUS_KEY = 'quota-bar';
+const USAGE_WIDGET = 'quota-bar:usage';
 
 export interface QuotaExtensionOptions {
   adapters?: readonly QuotaAdapter[]; // Extra adapters; duplicate IDs are rejected.
@@ -25,6 +26,7 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
     let current: ExtensionContext | undefined;
     let selectedProvider: string | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
+    let lastStatus: string | undefined;
     // Invalidates pending commands on model/session replacement or another /usage.
     let commandGeneration = 0;
 
@@ -40,7 +42,11 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
         const ctx = current;
         const paint = process.env.NO_COLOR !== undefined ? undefined
           : (tone: Parameters<typeof ctx.ui.theme.fg>[0], text: string) => ctx.ui.theme.fg(tone, text);
-        ctx.ui.setStatus(STATUS_KEY, renderFooter(controller.state, paint) || undefined);
+        const text = renderFooter(controller.state, paint) || undefined;
+        if (text !== lastStatus) {
+          ctx.ui.setStatus(STATUS_KEY, text);
+          lastStatus = text;
+        }
       } catch {
         // Stale session contexts must not keep a background polling loop alive.
         current = undefined;
@@ -81,6 +87,7 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
       if (!ctx.hasUI) return;
       if (select || provider !== selectedProvider) {
         commandGeneration++;
+        if (ctx.mode === 'tui') ctx.ui.setWidget(USAGE_WIDGET, undefined);
         selectedProvider = provider;
         controller.select(provider);
       }
@@ -88,6 +95,7 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
     };
 
     pi.on('session_start', (_event, ctx) => {
+      lastStatus = undefined;
       bind(ctx, true);
       if (timer) clearInterval(timer);
       if (ctx.hasUI) {
@@ -105,8 +113,10 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
       timer = undefined;
       current = undefined;
       selectedProvider = undefined;
+      lastStatus = undefined;
       commandGeneration++;
       controller.stop();
+      if (ctx.hasUI && ctx.mode === 'tui') ctx.ui.setWidget(USAGE_WIDGET, undefined);
       if (ctx.hasUI && options.footer !== false) ctx.ui.setStatus(STATUS_KEY, undefined);
     });
 
@@ -116,16 +126,24 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
         if (!ctx.hasUI) return;
         bind(ctx);
         const generation = ++commandGeneration;
-        await refresh(true);
-        // Never append via a stale Pi runtime, or label a replacement model's data
-        // as the result of the original command. A newer command owns its result.
-        if (!current || generation !== commandGeneration) return;
-        const card = captureUsage(controller.state);
-        if (!card) return;
-        pi.appendEntry<UsageCard>(USAGE_ENTRY, card);
-        // Custom entry renderers are TUI-only; RPC clients still get readable output.
-        if (ctx.mode !== 'tui') {
-          ctx.ui.notify(renderUsage(card.state, undefined, card.capturedAt).join('\n'), 'info');
+        if (ctx.mode === 'tui') ctx.ui.setWidget(USAGE_WIDGET, ['Loading…']);
+        try {
+          await refresh(true);
+          // Never append via a stale Pi runtime, or label a replacement model's data
+          // as the result of the original command. A newer command owns its result.
+          if (!current || generation !== commandGeneration) return;
+          const card = captureUsage(controller.state);
+          if (!card) return;
+          pi.appendEntry<UsageCard>(USAGE_ENTRY, card);
+          // Custom entry renderers are TUI-only; RPC clients still get readable output.
+          if (ctx.mode !== 'tui') {
+            ctx.ui.notify(renderUsage(card.state, undefined, card.capturedAt).join('\n'), 'info');
+          }
+        } finally {
+          // An older request must not clear a newer command's loading indicator.
+          if (current && generation === commandGeneration && ctx.mode === 'tui') {
+            ctx.ui.setWidget(USAGE_WIDGET, undefined);
+          }
         }
       },
     });

@@ -33,7 +33,8 @@ export function validateSnapshot(snapshot: QuotaSnapshot): QuotaSnapshot {
       || !Number.isFinite(data.remaining) || !Number.isFinite(data.used) || data.used < 0) {
       throw new QuotaError('schema');
     }
-    balance = { currency: data.currency, remaining: data.remaining, used: data.used };
+    balance = { currency: data.currency, remaining: data.remaining, used: data.used,
+      ...(data.unlimited === true ? { unlimited: true } : {}) };
   }
   const ids = new Set<string>();
   const windows = snapshot.windows.map(window => {

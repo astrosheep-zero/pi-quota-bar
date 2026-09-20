@@ -22,7 +22,7 @@ Codex · Remaining quota
 1w  [█████████████████░░░]  85% ↺ 5d3h
 ```
 
-- Each `/usage` forces a fresh query and inserts a new snapshot. Labels, bars, percentages and reset times are column-aligned. The capture timestamp is stored as metadata only; no timestamp, legend or instruction footer is displayed. No overlay, no input replacement, no focus capture.
+- Each `/usage` starts immediately, including during streaming, and shows `Loading…` above the editor while fetching. The indicator is removed when the query finishes or the model/session changes. Each command forces a fresh query and inserts a new snapshot. Labels, bars, percentages and reset times are column-aligned. The capture timestamp is stored as metadata only; no timestamp, legend or instruction footer is displayed. No overlay, no input replacement, no focus capture.
 - Snapshots persist with the session but are custom entries, **not LLM messages**. They do not consume model context. Amounts and countdowns stay frozen at capture time; run `/usage` again for a new snapshot. The footer keeps refreshing independently.
 - Failed queries produce an explicit error snapshot, not stale percentages. Model/session switches cancel pending card insertion.
 - Bar + percentage use Pi's theme tokens: `success` above 30%, `warning` above 10% through 30%, `error` at or below 10%. Default themes render these green/yellow/red; custom themes can change them.
@@ -82,28 +82,34 @@ Replace `my-new-api` with the **exact provider ID in Pi**, then run `/reload`. M
 
 Only the global settings namespace is used. Project-local settings are deliberately ignored so a repository cannot redirect globally authenticated credentials to a quota endpoint.
 
-- `adapter`: only `new-api` is supported in this config; there is **no billing fallback**.
-- `quotaPerUnit`: quota units per currency unit; default `500000`. Must be a positive number. Set it to match your site's accounting.
-- `currency`: uppercase three-letter display currency; default `USD`. This labels the converted units, **not an exchange-rate conversion**.
+- `adapter`: `new-api` (any new-api/one-api deployment) or `deepseek` (official DeepSeek API, no options).
+- `quotaPerUnit` (new-api only): quota units per currency unit; default `500000`. Must be a positive number. Set it to match your site's accounting.
+- `currency` (new-api only): uppercase three-letter display currency; default `USD`. This labels the converted units, **not an exchange-rate conversion**.
 - API key and Base URL come from the selected provider's resolved Pi auth/model config. Do not put keys in this file.
 - Config is global, strict and read on extension load/reload. Unknown fields, invalid units, unsupported adapters and attempts to override Codex/Kimi are rejected. A warning is shown and built-in Codex/Kimi still work.
 
-The adapter makes one authenticated **GET `/api/user/self`**. Trailing `/v1` and `/` are normalized; an existing deployment prefix is retained:
+The adapter queries with the provider's own API key, newest first, falling back only when an endpoint does not exist (HTTP 404):
+
+1. **GET `{root}/api/usage/token/`** (new-api ≥ v0.9.0-alpha.8) — designed for API keys: returns the key's own granted/used/remaining quota. `root` is the base URL without a trailing `/v1`/`/v1beta`:
 
 ```text
-https://host/v1          -> https://host/api/user/self
-https://host/gateway/v1  -> https://host/gateway/api/user/self
+https://host/v1          -> https://host/api/usage/token/
+https://host/gateway/v1  -> https://host/gateway/api/usage/token/
 ```
+
+2. **GET `{root}/v1/dashboard/billing/subscription` + `/usage`** (one-api legacy, older deployments) — `hard_limit_usd - total_usage/100` is the balance; `total_usage` is in cents. A `hard_limit_usd` of 1e8 means an unlimited quota, shown as `∞`.
+
+`/api/user/self` is not used: it only accepts account session tokens and rejects API keys (401) on every tested deployment.
 
 HTTPS is required, except HTTP loopback (`localhost`, `127.0.0.1`, `::1`) for local deployments. Credentials stay on the configured origin; redirects are rejected. There is no alternate-host setting, cookie scraping, or account-token discovery.
 
-Expected response:
+Expected response (step 1):
 
 ```json
-{"success": true, "data": {"quota": 6170000, "used_quota": 28390000}}
+{"code": true, "data": {"object": "token_usage", "total_used": 28390000, "total_available": 6170000, "unlimited_quota": false}}
 ```
 
-`quota / quotaPerUnit` is the balance; `used_quota / quotaPerUnit` is the used amount. Both raw quota fields must be present and valid integers. These are **account-level amounts**, not necessarily limits of the individual API key. Cumulative spending plus current balance is not treated as a renewable quota limit, so no percentage, bar or reset time is fabricated.
+`total_available / quotaPerUnit` is the balance; `total_used / quotaPerUnit` is the used amount. Raw quota fields must be valid integers. `unlimited_quota: true` shows an unlimited balance with the used amount still listed. These are **key-level amounts** for step 1 and account-level for step 2, not renewable quota limits, so no percentage, bar or reset time is fabricated.
 
 Footer:
 
@@ -120,7 +126,11 @@ Balance  $12.34
 Used     $56.78
 ```
 
-Positive balances use neutral text, not an arbitrary low-balance threshold; zero/debt is red. Some new-api deployments require a session/account token for `/api/user/self` and reject inference API keys. HTTP 401/403 is shown as **Account quota access denied**; the extension does not try billing or another credential. No real new-api account has been tested yet.
+Positive balances use neutral text, not an arbitrary low-balance threshold; zero/debt is red; unlimited shows `∞`. If the API key cannot read any quota endpoint, HTTP 401/403 is shown as **Account quota access denied**; the extension does not try another credential.
+
+## DeepSeek
+
+With `"adapter": "deepseek"` the official endpoint **GET `https://api.deepseek.com/user/balance`** is queried with the provider's own key. Response amounts are strings in the account currency (e.g. CNY): `total_balance` is shown as the balance. The endpoint exposes no usage total, so `Used` shows 0.00. The provider's base URL must stay on `api.deepseek.com`.
 
 ## Architecture
 

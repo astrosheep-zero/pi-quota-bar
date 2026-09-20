@@ -36,6 +36,7 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
     theme: { fg: (_tone: string, text: string) => text },
     setStatus: (_key: string, text: string | undefined) => statuses.push(text),
     notify: () => {},
+    setWidget: () => {},
     custom: async (): Promise<void> => { assert.fail('No modal or input replacement allowed'); },
   };
   const ctx = {
@@ -143,7 +144,7 @@ test('new-api works through Pi auth, controller, footer and persistent /usage it
   model.provider = 'my-gateway';
   model.baseUrl = 'https://gateway.test/v1';
   h.respondWith(async () => new Response(JSON.stringify({
-    success: true, data: { quota: 6170000, used_quota: 28390000 },
+    code: true, message: 'ok', data: { object: 'token_usage', total_used: 28390000, total_available: 6170000 },
   })));
   h.emit('session_start');
   await tick();
