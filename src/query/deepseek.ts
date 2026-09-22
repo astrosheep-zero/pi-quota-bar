@@ -16,8 +16,8 @@ export function parseDeepSeekBalance(payload: unknown): AccountBalance {
     const remaining = numeric(info.total_balance);
     if (typeof info.currency !== 'string' || !/^[A-Z]{3}$/.test(info.currency)
       || remaining === null || remaining < 0) continue;
-    // The endpoint exposes no usage total; used stays 0 rather than fabricated.
-    return { currency: info.currency, remaining, used: 0 };
+    // The endpoint exposes no usage total; only return the actual balance.
+    return { currency: info.currency, remaining };
   }
   throw new QuotaError('schema');
 }

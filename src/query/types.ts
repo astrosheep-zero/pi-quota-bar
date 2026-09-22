@@ -6,18 +6,33 @@ export interface QuotaWindow {
   resetAt: number | null; // epoch milliseconds
   durationSeconds: number;
   scope?: string; // e.g. a model-specific Codex quota domain
+  amounts?: QuotaAllowance; // exact periodic amounts when exposed by the API
 }
 
 export interface AccountBalance {
   currency: string; // ISO-style currency code, e.g. USD
   remaining: number; // may be negative (debt); not a periodic allowance
-  used: number;
   unlimited?: boolean; // provider granted no finite cap; ignore remaining
+}
+
+export interface QuotaAllowance {
+  currency: string;
+  limit: number;
+  used: number;
+  remaining: number;
+}
+
+export interface SpendSummary {
+  currency: string;
+  today?: number;
+  lifetime?: number;
 }
 
 export interface QuotaSnapshot {
   windows: readonly QuotaWindow[];
   balance?: AccountBalance;
+  allowance?: QuotaAllowance;
+  spend?: SpendSummary;
   fetchedAt: number;
 }
 

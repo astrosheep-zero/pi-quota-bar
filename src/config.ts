@@ -1,9 +1,10 @@
 import { createDeepSeekAdapter } from './query/deepseek.ts';
 import { createNewApiAdapter, validateNewApiOptions } from './query/new-api.ts';
+import { createSub2ApiAdapter } from './query/sub2api.ts';
 import type { NewApiOptions } from './query/new-api.ts';
 import type { QuotaAdapter } from './query/types.ts';
 
-export interface ProviderQuotaConfig extends NewApiOptions { adapter: 'new-api' | 'deepseek' }
+export interface ProviderQuotaConfig extends NewApiOptions { adapter: 'new-api' | 'deepseek' | 'sub2api' }
 export interface QuotaConfig { providers: Record<string, ProviderQuotaConfig> }
 
 const DASHBOARD_KEYS = ['dashboardAccessToken', 'dashboardUserId'] as const;
@@ -25,7 +26,7 @@ function parseDashboardOptions(item: Record<string, unknown>): Pick<NewApiOption
 export class QuotaConfigError extends Error {
   constructor() {
     // Settings may accidentally contain secrets. Never echo content/values.
-    super('Invalid settings.json quotaUsage. Use providers with adapter "new-api" (positive quotaPerUnit, uppercase currency) or "deepseek" (no options).');
+    super('Invalid settings.json quotaUsage. Use providers with adapter "new-api", "deepseek" or "sub2api".');
   }
 }
 
@@ -46,6 +47,11 @@ export function parseQuotaConfig(value: unknown): QuotaConfig {
       providers[provider] = { adapter: 'deepseek', quotaPerUnit: 500000, currency: 'USD' };
       continue;
     }
+    if (item.adapter === 'sub2api') {
+      if (Object.keys(item).length !== 1) throw new QuotaConfigError();
+      providers[provider] = { adapter: 'sub2api' };
+      continue;
+    }
     if (item.adapter !== 'new-api'
       || Object.keys(item).some(key => !['adapter', 'quotaPerUnit', 'currency', ...DASHBOARD_KEYS].includes(key))
       || (item.quotaPerUnit !== undefined && typeof item.quotaPerUnit !== 'number')
@@ -63,5 +69,6 @@ export function loadQuotaAdaptersFromSettings(settings: unknown): QuotaAdapter[]
   const config = parseQuotaConfig(settings.quotaUsage);
   return Object.entries(config.providers).map(([provider, options]) => options.adapter === 'deepseek'
     ? createDeepSeekAdapter(provider)
+    : options.adapter === 'sub2api' ? createSub2ApiAdapter(provider)
     : createNewApiAdapter(provider, options));
 }

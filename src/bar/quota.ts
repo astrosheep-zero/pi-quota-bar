@@ -1,7 +1,7 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { duration, formatPercent, horizontalBar, plain, remainingTone, renderBar, verticalBar } from './bar.ts';
 import type { BarElement, Paint, Span } from './bar.ts';
-import { balanceLines, balanceSpans } from './balance.ts';
+import { allowanceLines, allowanceSpans, balanceLines, balanceSpans, money, spendLines } from './balance.ts';
 import type { QuotaErrorCode, QuotaState, QuotaWindow } from '../query/types.ts';
 
 const errorText: Record<QuotaErrorCode, string> = {
@@ -32,7 +32,8 @@ export function quotaElement(state: QuotaState, now = Date.now()): BarElement {
   const windows = state.snapshot.windows;
   const shared = windows.filter(window => !window.scope);
   const shown = (shared.length ? shared : windows).slice(0, 2);
-  const spans: Span[] = state.snapshot.balance ? balanceSpans(state.snapshot.balance) : [];
+  const spans: Span[] = state.snapshot.balance ? balanceSpans(state.snapshot.balance)
+    : state.snapshot.allowance ? allowanceSpans(state.snapshot.allowance) : [];
   for (const window of shown) {
     if (spans.length) spans.push({ text: ' · ', tone: 'dim' });
     spans.push(...windowSpans(window, now));
@@ -47,8 +48,12 @@ export function renderFooter(state: QuotaState, paint: Paint = plain, now = Date
 
 export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.now(), barWidth = 20): string[] {
   if (state.kind === 'hidden') return ['No quota adapter for the current provider.'];
-  const balanceOnly = state.kind === 'ready' && state.snapshot.balance && state.snapshot.windows.length === 0;
-  const title = `${state.label} · ${balanceOnly ? 'Balance' : 'Remaining quota'}`;
+  const balanceOnly = state.kind === 'ready' && state.snapshot.balance
+    && !state.snapshot.allowance && state.snapshot.windows.length === 0;
+  const spendOnly = state.kind === 'ready' && state.snapshot.spend
+    && !state.snapshot.balance && !state.snapshot.allowance && state.snapshot.windows.length === 0;
+  const title = `${state.label} · ${balanceOnly ? (state.snapshot.spend ? 'Account' : 'Balance')
+    : spendOnly ? 'Usage' : 'Remaining quota'}`;
   if (state.kind === 'loading') return [title, '', 'Loading…'];
   if (state.kind === 'error') return [title, '', errorText[state.code]];
   const rows = state.snapshot.windows.map(window => {
@@ -58,6 +63,7 @@ export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.
       remaining,
       value: formatPercent(remaining),
       reset: window.resetAt === null ? '?' : duration(window.resetAt - now),
+      amounts: window.amounts,
     };
   });
   const labelWidth = Math.max(0, ...rows.map(row => visibleWidth(row.label)));
@@ -68,11 +74,21 @@ export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.
     const tone = remainingTone(row.remaining);
     return paint('dim', `${label}  `)
       + paint(tone, `${horizontalBar(row.remaining, barWidth)} ${value}`)
-      + paint('dim', ` ↺ ${row.reset}`);
+      + paint('dim', ` ↺ ${row.reset}${row.amounts
+        ? ` · ${money(row.amounts.remaining, row.amounts.currency)}/${money(row.amounts.limit, row.amounts.currency)}`
+        : ''}`);
   })];
-  if (state.snapshot.balance) {
+  if (state.snapshot.allowance) {
     if (rows.length) lines.push('');
+    lines.push(...allowanceLines(state.snapshot.allowance, paint, barWidth));
+  }
+  if (state.snapshot.balance) {
+    if (rows.length || state.snapshot.allowance) lines.push('');
     lines.push(...balanceLines(state.snapshot.balance, paint));
+  }
+  if (state.snapshot.spend) {
+    if (rows.length || state.snapshot.allowance || state.snapshot.balance) lines.push('');
+    lines.push(...spendLines(state.snapshot.spend, paint));
   }
   return lines;
 }

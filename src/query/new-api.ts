@@ -47,12 +47,12 @@ export function parseNewApiTokenUsage(payload: unknown, options: NewApiOptions =
   // Missing fields must not become a made-up zero balance.
   if (used === null || !Number.isSafeInteger(used) || used < 0) throw new QuotaError('schema');
   if (data.unlimited_quota === true) {
-    return { currency, remaining: 0, used: used / quotaPerUnit, unlimited: true };
+    return { currency, remaining: 0, unlimited: true };
   }
   const remaining = numeric(data.total_available);
   if (remaining === null || !Number.isSafeInteger(remaining)) throw new QuotaError('schema');
-  const balance = { currency, remaining: remaining / quotaPerUnit, used: used / quotaPerUnit };
-  if (!Number.isFinite(balance.remaining) || !Number.isFinite(balance.used)) throw new QuotaError('schema');
+  const balance = { currency, remaining: remaining / quotaPerUnit };
+  if (!Number.isFinite(balance.remaining)) throw new QuotaError('schema');
   return balance;
 }
 
@@ -69,7 +69,7 @@ export function parseNewApiUserSelf(payload: unknown, options: NewApiOptions = {
   if (quota === null || usedQuota === null
     || !Number.isSafeInteger(quota) || !Number.isSafeInteger(usedQuota)
     || quota < 0 || usedQuota < 0) throw new QuotaError('schema');
-  return { currency, remaining: quota / quotaPerUnit, used: usedQuota / quotaPerUnit };
+  return { currency, remaining: quota / quotaPerUnit };
 }
 
 // Legacy one-api billing pair, still the only option on older deployments.
@@ -84,8 +84,8 @@ export function parseNewApiBilling(subscription: unknown, usage: unknown, option
   if (limit === null || !Number.isFinite(limit) || limit < 0
     || totalUsage === null || !Number.isFinite(totalUsage) || totalUsage < 0) throw new QuotaError('schema');
   const used = totalUsage / 100;
-  if (limit >= 1e7) return { currency, remaining: 0, used, unlimited: true };
-  return { currency, remaining: limit - used, used };
+  if (limit >= 1e7) return { currency, remaining: 0, unlimited: true };
+  return { currency, remaining: limit - used };
 }
 
 export function createNewApiAdapter(provider: string, options: NewApiOptions = {}): QuotaAdapter {

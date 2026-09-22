@@ -1,6 +1,6 @@
 # pi-quota-bar
 
-A small Pi extension for **Codex** (`openai-codex`), **Kimi** (`kimi-coding`), **OpenCode Go** (`opencode-go`), and explicitly configured **new-api** providers.
+A small Pi extension for **Codex** (`openai-codex`), **Kimi** (`kimi-coding`), **OpenCode Go** (`opencode-go`), and explicitly configured **new-api**, **DeepSeek**, and **Sub2API** providers.
 All UI text is English. All quota percentages mean **remaining**, not used.
 
 ## Display
@@ -84,7 +84,7 @@ Replace `my-new-api` with the **exact provider ID in Pi**, then run `/reload`. M
 
 Only the global settings namespace is used. Project-local settings are deliberately ignored so a repository cannot redirect globally authenticated credentials to a quota endpoint.
 
-- `adapter`: `new-api` (any new-api/one-api deployment) or `deepseek` (official DeepSeek API, no options).
+- `adapter`: `new-api` (any new-api/one-api deployment), `deepseek` (official DeepSeek API, no options), or `sub2api` (the explicit Sub2API `/usage` protocol, no options).
 - `quotaPerUnit` (new-api only): quota units per currency unit; default `500000`. Must be a positive number. Set it to match your site's accounting.
 - `currency` (new-api only): uppercase three-letter display currency; default `USD`. This labels the converted units, **not an exchange-rate conversion**.
 - `dashboardAccessToken` (new-api only, optional): a console **system access token** (个人设置 → 安全设置 → 系统访问令牌), not an `sk-` API key. When set, `GET {root}/api/user/self` is queried first for the real **account** balance (quota and used_quota), which `sk-` keys cannot read. The token is a secret: this file is local-only and its values are never echoed in errors or logs. Treat it like an API key and rotate it if exposed.
@@ -115,7 +115,7 @@ Expected response (step 1):
 {"code": true, "data": {"object": "token_usage", "total_used": 28390000, "total_available": 6170000, "unlimited_quota": false}}
 ```
 
-`total_available / quotaPerUnit` is the balance; `total_used / quotaPerUnit` is the used amount. Raw quota fields must be valid integers. `unlimited_quota: true` shows an unlimited balance with the used amount still listed. These are **key-level amounts** for step 1 and account-level for step 2, not renewable quota limits, so no percentage, bar or reset time is fabricated.
+`total_available / quotaPerUnit` is the remaining balance. Raw quota fields must be valid integers. The adapter does not turn historical `total_used` into a generic `Used` field. These are **key-level amounts** for step 1 and account-level for step 2, not renewable quota limits, so no percentage, bar or reset time is fabricated.
 
 Footer:
 
@@ -134,9 +134,28 @@ Used     $56.78
 
 Positive balances use neutral text, not an arbitrary low-balance threshold; zero/debt is red; unlimited shows `∞`. If the API key cannot read any quota endpoint, HTTP 401/403 is shown as **Account quota access denied**; the extension does not try another credential.
 
+## Sub2API
+
+Configure a provider explicitly; its Pi model `baseUrl` is used, so no deployment domain is hard-coded:
+
+```json
+{
+  "quotaUsage": { "providers": { "codex-for": { "adapter": "sub2api" } } }
+}
+```
+
+The adapter requests `GET {baseUrl}/usage` with the selected provider's API key. It preserves deployment paths and rejects remote HTTP, credentials in URLs, query strings, fragments, and redirects. It recognizes the protocol's `quota_limited`, wallet, and subscription responses:
+
+- fixed `quota` and `rate_limits` become quota bars with exact amounts and reset times;
+- subscription daily/weekly/monthly limits become separate period bars;
+- wallet `balance`/`remaining` is shown as a balance, never as a percentage;
+- `usage.today.actual_cost` and `usage.total.actual_cost` are shown only as Today/Lifetime spend in `/usage`, never as quota usage.
+
+The footer stays compact: a balance or the most actionable quota windows. `/usage` contains exact amounts and spend statistics.
+
 ## DeepSeek
 
-With `"adapter": "deepseek"` the official endpoint **GET `https://api.deepseek.com/user/balance`** is queried with the provider's own key. Response amounts are strings in the account currency (e.g. CNY): `total_balance` is shown as the balance. The endpoint exposes no usage total, so `Used` shows 0.00. The provider's base URL must stay on `api.deepseek.com`.
+With `"adapter": "deepseek"` the official endpoint **GET `https://api.deepseek.com/user/balance`** is queried with the provider's own key. Response amounts are strings in the account currency (e.g. CNY): `total_balance` is shown as the balance. The endpoint exposes no usage total, so no `Used` field is shown. The provider's base URL must stay on `api.deepseek.com`.
 
 ## OpenCode Go
 
@@ -197,7 +216,7 @@ interface QueryContext {
 }
 ```
 
-Return normalized windows with an ID, short English label, duration, remaining percentage (`null` when unknown) and reset timestamp (`null` when unknown). Amount-only adapters may instead return `windows: []` plus `balance: { currency, remaining, used }`. A snapshot must contain windows, a valid balance, or both. Pass the signal into I/O. Throw `QuotaError` with a safe code. Never include credentials in results, IDs, labels or errors.
+Return normalized windows with an ID, short English label, duration, remaining percentage (`null` when unknown) and reset timestamp (`null` when unknown). Amount-only adapters may instead return `windows: []` plus a `balance` (wallet), an `allowance` (`limit/used/remaining`), and optional `spend` (`today/lifetime`). These fields are intentionally separate. A snapshot must contain windows, a valid balance, allowance, or spend. Pass the signal into I/O. Throw `QuotaError` with a safe code. Never include credentials in results, IDs, labels or errors.
 
 Custom provider names are **not automatically treated as aliases for Codex or Kimi**: a gateway may have different credentials and a different quota system. No URL is inferred from model names or arbitrary response fields.
 
