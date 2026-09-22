@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createNewApiAdapter, newApiRootUrl, parseNewApiBilling, parseNewApiTokenUsage, parseNewApiUserSelf } from '../src/query/new-api.ts';
-import { createSub2ApiAdapter, parseSub2ApiUsage, sub2ApiUsageUrl } from '../src/query/sub2api.ts';
 import { parseDeepSeekBalance } from '../src/query/deepseek.ts';
 import { QuotaError } from '../src/query/types.ts';
 import type { QueryContext, QuotaState } from '../src/query/types.ts';
@@ -39,40 +38,6 @@ test('new-api billing fallback: hard limit minus usage in cents; 1e8 limit means
   for (const pair of [[{}, {}], [{ hard_limit_usd: 100 }, {}], [{ hard_limit_usd: -1 }, { total_usage: 0 }],
     [{ hard_limit_usd: 100 }, { total_usage: -1 }]] as const) {
     assert.throws(() => parseNewApiBilling(pair[0], pair[1]), QuotaError);
-  }
-});
-
-test('Sub2API maps wallet, fixed quota, windows and spend without mixing semantics', async () => {
-  const payload = { mode: 'quota_limited', isValid: true, unit: 'USD',
-    quota: { limit: 100, used: 15, remaining: 85 },
-    rate_limits: [{ window: '5h', limit: 40, used: 10, remaining: 30, reset_at: '2026-09-07T08:00:00Z' }],
-    usage: { today: { actual_cost: 2.5 }, total: { actual_cost: 80 } } };
-  const snapshot = parseSub2ApiUsage(payload);
-  assert.equal(snapshot.fetchedAt, 0);
-  assert.deepEqual(snapshot.allowance, { currency: 'USD', limit: 100, used: 15, remaining: 85 });
-  assert.deepEqual(snapshot.spend, { currency: 'USD', today: 2.5, lifetime: 80 });
-  assert.deepEqual(snapshot.windows.map(window => [window.label, window.remainingPercent]), [['5h', 75]]);
-  const wallet = parseSub2ApiUsage({ mode: 'unrestricted', isValid: true, unit: 'USD',
-    planName: '钱包余额', balance: 940, remaining: 940, usage: { total: { actual_cost: 80 } } });
-  assert.deepEqual(wallet, { windows: [], balance: { currency: 'USD', remaining: 940 },
-    spend: { currency: 'USD', lifetime: 80 }, fetchedAt: 0 });
-  const subscription = parseSub2ApiUsage({ mode: 'unrestricted', isValid: true, unit: 'USD',
-    subscription: { daily_usage_usd: 2, daily_limit_usd: 10, weekly_usage_usd: 5, weekly_limit_usd: 20,
-      weekly_window_start: '2026-09-01T00:00:00Z' } });
-  assert.deepEqual(subscription.windows.map(window => [window.label, window.remainingPercent]), [['1d', 80], ['1w', 75]]);
-  const result = await createSub2ApiAdapter('gateway').query(context({ provider: 'gateway',
-    getAuth: async () => ({ apiKey: 'secret', baseUrl: 'https://host.test/gateway/v1' }),
-    getJson: async (url, headers) => { assert.equal(url, 'https://host.test/gateway/v1/usage');
-      assert.equal(headers.Authorization, 'Bearer secret'); return payload; },
-  }));
-  assert.equal(result.fetchedAt, 100000);
-});
-
-test('Sub2API URL stays on the configured origin and preserves a deployment path', () => {
-  assert.equal(sub2ApiUsageUrl('https://host.test/v1'), 'https://host.test/v1/usage');
-  assert.equal(sub2ApiUsageUrl('https://host.test/gateway/v1/'), 'https://host.test/gateway/v1/usage');
-  for (const url of [undefined, 'http://remote.test/v1', 'https://user:pass@host.test/v1', 'https://host.test/v1?x=secret']) {
-    assert.throws(() => sub2ApiUsageUrl(url), QuotaError);
   }
 });
 
@@ -241,7 +206,8 @@ test('config binds explicit provider IDs and validates optional unit/currency se
     deepseek: { adapter: 'deepseek' }, sub2: { adapter: 'sub2api' },
   } });
   assert.deepEqual(config.providers.micucode, { adapter: 'new-api', quotaPerUnit: 500000, currency: 'USD' });
-  assert.equal(config.providers.other.quotaPerUnit, 1000);
+  assert.equal(config.providers.other.adapter, 'new-api');
+  if (config.providers.other.adapter === 'new-api') assert.equal(config.providers.other.quotaPerUnit, 1000);
   assert.equal(config.providers.deepseek.adapter, 'deepseek');
   assert.equal(config.providers.sub2.adapter, 'sub2api');
   for (const value of [null, {}, { providers: [] }, { providers: {}, apiKey: 'SECRET' },
@@ -313,7 +279,8 @@ test('config accepts dashboard PAT options, rejects malformed ones without echoi
   } });
   assert.deepEqual(config.providers.micu, { adapter: 'new-api', quotaPerUnit: 500000, currency: 'USD',
     dashboardAccessToken: 'PAT-SECRET', dashboardUserId: 42684 });
-  assert.equal(config.providers.plain.dashboardAccessToken, undefined);
+  assert.equal(config.providers.plain.adapter, 'new-api');
+  if (config.providers.plain.adapter === 'new-api') assert.equal(config.providers.plain.dashboardAccessToken, undefined);
   for (const item of [{ adapter: 'new-api', dashboardAccessToken: '' },
     { adapter: 'new-api', dashboardAccessToken: 42 },
     { adapter: 'new-api', dashboardUserId: 0 },

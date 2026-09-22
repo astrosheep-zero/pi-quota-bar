@@ -25,7 +25,7 @@ export class AdapterRegistry {
 export function validateSnapshot(snapshot: QuotaSnapshot): QuotaSnapshot {
   if (!snapshot || !Number.isFinite(snapshot.fetchedAt) || !Array.isArray(snapshot.windows)
     || (snapshot.windows.length === 0 && snapshot.balance === undefined
-      && snapshot.allowance === undefined && snapshot.spend === undefined)
+      && snapshot.allowance === undefined)
     || snapshot.windows.length > 64) throw new QuotaError('schema');
   let balance: AccountBalance | undefined;
   if (snapshot.balance !== undefined) {

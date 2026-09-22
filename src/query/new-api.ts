@@ -1,6 +1,7 @@
 import { bearer } from './http.ts';
 import { numeric, object } from './parse.ts';
 import { QuotaError } from './types.ts';
+import { safeBaseUrl } from './url.ts';
 import type { AccountBalance, QuotaAdapter } from './types.ts';
 
 export interface NewApiOptions {
@@ -24,12 +25,7 @@ export function validateNewApiOptions(options: NewApiOptions): { quotaPerUnit: n
 // Billing endpoints live at the deployment root, never under /v1.
 // https://host/v1 -> https://host, https://host/gateway/v1 -> https://host/gateway
 export function newApiRootUrl(baseUrl: string | undefined): string {
-  if (!baseUrl) throw new QuotaError('unsupported-auth');
-  let url: URL;
-  try { url = new URL(baseUrl); } catch { throw new QuotaError('unsupported-auth'); }
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
-    || url.username || url.password || url.search || url.hash) throw new QuotaError('unsupported-auth');
+  const url = safeBaseUrl(baseUrl);
   const path = url.pathname.replace(/\/+$/, '').replace(/\/v\d+(?:beta\d*)?$/i, '');
   return url.origin + path;
 }

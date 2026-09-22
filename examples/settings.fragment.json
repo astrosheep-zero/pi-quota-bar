@@ -7,6 +7,9 @@
     },
     "deepseek": {
       "adapter": "deepseek"
+    },
+    "my-sub2api": {
+      "adapter": "sub2api"
     }
   }
 }

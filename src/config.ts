@@ -4,7 +4,9 @@ import { createSub2ApiAdapter } from './query/sub2api.ts';
 import type { NewApiOptions } from './query/new-api.ts';
 import type { QuotaAdapter } from './query/types.ts';
 
-export interface ProviderQuotaConfig extends NewApiOptions { adapter: 'new-api' | 'deepseek' | 'sub2api' }
+export type ProviderQuotaConfig =
+  | ({ adapter: 'new-api'; quotaPerUnit: number; currency: string } & Pick<NewApiOptions, 'dashboardAccessToken' | 'dashboardUserId'>)
+  | { adapter: 'deepseek' | 'sub2api' };
 export interface QuotaConfig { providers: Record<string, ProviderQuotaConfig> }
 
 const DASHBOARD_KEYS = ['dashboardAccessToken', 'dashboardUserId'] as const;
@@ -44,7 +46,7 @@ export function parseQuotaConfig(value: unknown): QuotaConfig {
       || !record(item)) throw new QuotaConfigError();
     if (item.adapter === 'deepseek') {
       if (Object.keys(item).some(key => key !== 'adapter')) throw new QuotaConfigError();
-      providers[provider] = { adapter: 'deepseek', quotaPerUnit: 500000, currency: 'USD' };
+      providers[provider] = { adapter: 'deepseek' };
       continue;
     }
     if (item.adapter === 'sub2api') {
@@ -67,8 +69,11 @@ export function parseQuotaConfig(value: unknown): QuotaConfig {
 export function loadQuotaAdaptersFromSettings(settings: unknown): QuotaAdapter[] {
   if (!record(settings) || settings.quotaUsage === undefined) return [];
   const config = parseQuotaConfig(settings.quotaUsage);
-  return Object.entries(config.providers).map(([provider, options]) => options.adapter === 'deepseek'
-    ? createDeepSeekAdapter(provider)
-    : options.adapter === 'sub2api' ? createSub2ApiAdapter(provider)
-    : createNewApiAdapter(provider, options));
+  return Object.entries(config.providers).map(([provider, options]) => {
+    switch (options.adapter) {
+      case 'deepseek': return createDeepSeekAdapter(provider);
+      case 'sub2api': return createSub2ApiAdapter(provider);
+      case 'new-api': return createNewApiAdapter(provider, options);
+    }
+  });
 }
