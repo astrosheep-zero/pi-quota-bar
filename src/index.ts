@@ -19,6 +19,6 @@ export default function (pi: ExtensionAPI): void {
       if (ctx.hasUI) ctx.ui.notify(new QuotaConfigError().message, 'warning');
     });
   }
-  // Invalid optional settings never disable the built-in Codex/Kimi adapters.
+  // Invalid optional settings never disable the built-in Codex/Kimi/OpenCode Go adapters.
   createQuotaExtension({ adapters })(pi);
 }

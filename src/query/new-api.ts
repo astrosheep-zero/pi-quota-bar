@@ -6,9 +6,14 @@ import type { AccountBalance, QuotaAdapter } from './types.ts';
 export interface NewApiOptions {
   quotaPerUnit?: number;
   currency?: string;
+  // Console dashboard PAT (个人设置 → 安全设置 → 系统访问令牌). When set,
+  // /api/user/self is queried first for the real account balance.
+  dashboardAccessToken?: string;
+  // Numeric user ID, sent as New-Api-User. Only old new-api forks require it.
+  dashboardUserId?: number;
 }
 
-export function validateNewApiOptions(options: NewApiOptions): Required<NewApiOptions> {
+export function validateNewApiOptions(options: NewApiOptions): { quotaPerUnit: number; currency: string } {
   const quotaPerUnit = options.quotaPerUnit ?? 500000;
   const currency = options.currency ?? 'USD';
   if (!Number.isFinite(quotaPerUnit) || quotaPerUnit <= 0) throw new Error('quotaPerUnit must be a positive number');
@@ -51,6 +56,22 @@ export function parseNewApiTokenUsage(payload: unknown, options: NewApiOptions =
   return balance;
 }
 
+// GET /api/user/self (UserAuth): the console's own account quota, readable with
+// a dashboard access token (PAT), which sk- keys are not. Old forks also demand
+// a matching New-Api-User header. Response shell: {success:true,data:{...}}.
+export function parseNewApiUserSelf(payload: unknown, options: NewApiOptions = {}): AccountBalance {
+  const { quotaPerUnit, currency } = validateNewApiOptions(options);
+  const response = object(payload);
+  if (response.success !== true) throw new QuotaError('schema');
+  const data = object(response.data);
+  const quota = numeric(data.quota);
+  const usedQuota = numeric(data.used_quota);
+  if (quota === null || usedQuota === null
+    || !Number.isSafeInteger(quota) || !Number.isSafeInteger(usedQuota)
+    || quota < 0 || usedQuota < 0) throw new QuotaError('schema');
+  return { currency, remaining: quota / quotaPerUnit, used: usedQuota / quotaPerUnit };
+}
+
 // Legacy one-api billing pair, still the only option on older deployments.
 // total_usage is in cents (divide by 100, per one-api issue #1785); most
 // deployments report a fake 1e8 hard limit for unlimited quotas.
@@ -69,6 +90,15 @@ export function parseNewApiBilling(subscription: unknown, usage: unknown, option
 
 export function createNewApiAdapter(provider: string, options: NewApiOptions = {}): QuotaAdapter {
   const settings = validateNewApiOptions(options);
+  const { dashboardAccessToken, dashboardUserId } = options;
+  if (dashboardAccessToken !== undefined
+    && (typeof dashboardAccessToken !== 'string' || dashboardAccessToken.trim() === '')) {
+    throw new Error('dashboardAccessToken must be a non-empty string');
+  }
+  if (dashboardUserId !== undefined
+    && (!Number.isSafeInteger(dashboardUserId) || dashboardUserId <= 0)) {
+    throw new Error('dashboardUserId must be a positive integer');
+  }
   return {
     provider, label: provider,
     async query(context) {
@@ -78,6 +108,18 @@ export function createNewApiAdapter(provider: string, options: NewApiOptions = {
       context.signal.throwIfAborted();
       if (!auth) throw new QuotaError('auth');
       const root = newApiRootUrl(auth.baseUrl);
+      // 0. Console account balance via PAT: the only view of real remaining
+      // account quota. Any failure falls through to the key-native paths.
+      if (dashboardAccessToken !== undefined) {
+        const headers: Record<string, string> = { Authorization: `Bearer ${dashboardAccessToken}` };
+        if (dashboardUserId !== undefined) headers['New-Api-User'] = String(dashboardUserId);
+        try {
+          const payload = await context.getJson(`${root}/api/user/self`, headers, context.signal);
+          return { windows: [], balance: parseNewApiUserSelf(payload, settings), fetchedAt: context.now() };
+        } catch (error) {
+          if (!(error instanceof QuotaError)) throw error;
+        }
+      }
       const headers = { Authorization: `Bearer ${bearer(auth)}` };
       // 1. Account billing (one-api legacy): a finite hard limit is the real
       // account balance. 1e8 means unlimited — then the key quota may still

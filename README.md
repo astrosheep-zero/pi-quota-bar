@@ -1,6 +1,6 @@
 # pi-quota-bar
 
-A small Pi extension for **Codex** (`openai-codex`), **Kimi** (`kimi-coding`), and explicitly configured **new-api** providers.
+A small Pi extension for **Codex** (`openai-codex`), **Kimi** (`kimi-coding`), **OpenCode Go** (`opencode-go`), and explicitly configured **new-api** providers.
 All UI text is English. All quota percentages mean **remaining**, not used.
 
 ## Display
@@ -44,7 +44,7 @@ For an isolated test without other extensions:
 pi --no-extensions -e /Users/astrosheep/Developer/pi-quota-usage/src/index.ts
 ```
 
-Select Codex or Kimi with `/model`. Authentication is resolved through Pi's current public `getProviderAuth()` API; login/refresh remain Pi's responsibility.
+Select Codex, Kimi or OpenCode Go with `/model`. Authentication is resolved through Pi's current public `getProviderAuth()` API; login/refresh remain Pi's responsibility.
 
 To install from npm:
 
@@ -72,34 +72,40 @@ Add `quotaUsage` to the global **`~/.pi/agent/settings.json`** (under `PI_CODING
     "my-new-api": {
       "adapter": "new-api",
       "quotaPerUnit": 500000,
-      "currency": "USD"
+      "currency": "USD",
+      "dashboardAccessToken": "<console PAT>",
+      "dashboardUserId": 42684
     }
   }
 }
 ```
 
-Replace `my-new-api` with the **exact provider ID in Pi**, then run `/reload`. Multiple provider entries are supported. See `examples/settings.fragment.json`. No site is queried unless it is explicitly configured and selected. Codex/Kimi need no config and cannot be overridden here.
+Replace `my-new-api` with the **exact provider ID in Pi**, then run `/reload`. Multiple provider entries are supported. See `examples/settings.fragment.json`. No site is queried unless it is explicitly configured and selected. Codex/Kimi/OpenCode Go need no config and cannot be overridden here.
 
 Only the global settings namespace is used. Project-local settings are deliberately ignored so a repository cannot redirect globally authenticated credentials to a quota endpoint.
 
 - `adapter`: `new-api` (any new-api/one-api deployment) or `deepseek` (official DeepSeek API, no options).
 - `quotaPerUnit` (new-api only): quota units per currency unit; default `500000`. Must be a positive number. Set it to match your site's accounting.
 - `currency` (new-api only): uppercase three-letter display currency; default `USD`. This labels the converted units, **not an exchange-rate conversion**.
-- API key and Base URL come from the selected provider's resolved Pi auth/model config. Do not put keys in this file.
-- Config is global, strict and read on extension load/reload. Unknown fields, invalid units, unsupported adapters and attempts to override Codex/Kimi are rejected. A warning is shown and built-in Codex/Kimi still work.
+- `dashboardAccessToken` (new-api only, optional): a console **system access token** (个人设置 → 安全设置 → 系统访问令牌), not an `sk-` API key. When set, `GET {root}/api/user/self` is queried first for the real **account** balance (quota and used_quota), which `sk-` keys cannot read. The token is a secret: this file is local-only and its values are never echoed in errors or logs. Treat it like an API key and rotate it if exposed.
+- `dashboardUserId` (new-api only, optional): your numeric user ID, sent as the `New-Api-User` header. Only old new-api forks require it; modern deployments work without it. Never inferred from the API key.
+- API key and Base URL come from the selected provider's resolved Pi auth/model config. The optional `dashboardAccessToken` above is the one credential that lives in this file.
+- Config is global, strict and read on extension load/reload. Unknown fields, invalid units, unsupported adapters and attempts to override Codex/Kimi/OpenCode Go are rejected. A warning is shown and built-in adapters still work.
 
 The adapter queries with the provider's own API key:
 
-1. **GET `{root}/v1/dashboard/billing/subscription` + `/usage`** (one-api legacy) — `hard_limit_usd - total_usage/100` is the account balance; `total_usage` is in cents. A `hard_limit_usd` of 1e8 means an unlimited quota; then the key quota below may still be finite.
+1. **GET `{root}/api/user/self`** (only with `dashboardAccessToken`) — the console's own account quota. Sent with `Authorization: Bearer <PAT>` and, when `dashboardUserId` is set, `New-Api-User: <id>`. Returns `data.quota` (remaining) and `data.used_quota`, both divided by `quotaPerUnit`. Any failure falls through to the key-native paths below, so an expired PAT degrades instead of breaking the bar.
 
-2. **GET `{root}/api/usage/token/`** (new-api ≥ v0.9.0-alpha.8) — designed for API keys: returns the key's own granted/used/remaining quota, used when billing is absent (404), rejects the key (401) or reports an unlimited account. `root` is the base URL without a trailing `/v1`/`/v1beta`:
+2. **GET `{root}/v1/dashboard/billing/subscription` + `/usage`** (one-api legacy) — `hard_limit_usd - total_usage/100` is the account balance; `total_usage` is in cents. A `hard_limit_usd` of 1e8 means an unlimited quota; then the key quota below may still be finite.
+
+3. **GET `{root}/api/usage/token/`** (new-api ≥ v0.9.0-alpha.8) — designed for API keys: returns the key's own granted/used/remaining quota, used when billing is absent (404), rejects the key (401) or reports an unlimited account. `root` is the base URL without a trailing `/v1`/`/v1beta`:
 
 ```text
 https://host/v1          -> https://host/api/usage/token/
 https://host/gateway/v1  -> https://host/gateway/api/usage/token/
 ```
 
-`/api/user/self` is not used: it only accepts account session tokens and rejects API keys (401) on every tested deployment.
+`/api/user/self` only accepts a console access token (PAT); an `sk-` API key is rejected with 401 on every tested deployment. Without `dashboardAccessToken` the account balance is not readable and the bar shows the key quota instead.
 
 HTTPS is required, except HTTP loopback (`localhost`, `127.0.0.1`, `::1`) for local deployments. Credentials stay on the configured origin; redirects are rejected. There is no alternate-host setting, cookie scraping, or account-token discovery.
 
@@ -132,10 +138,22 @@ Positive balances use neutral text, not an arbitrary low-balance threshold; zero
 
 With `"adapter": "deepseek"` the official endpoint **GET `https://api.deepseek.com/user/balance`** is queried with the provider's own key. Response amounts are strings in the account currency (e.g. CNY): `total_balance` is shown as the balance. The endpoint exposes no usage total, so `Used` shows 0.00. The provider's base URL must stay on `api.deepseek.com`.
 
+## OpenCode Go
+
+`opencode-go` needs no configuration. The provider's own key is sent to the official endpoint **GET `https://opencode.ai/zen/go/v1/usage`**, which reports three fixed windows as **used** percentages:
+
+```json
+{"usage":{"rolling":{"status":"ok","percent":10,"resetsAt":"2026-09-22T18:52:04.287Z"},
+          "weekly":{"status":"ok","percent":4,"resetsAt":"2026-09-28T00:00:00.000Z"},
+          "monthly":{"status":"ok","percent":2,"resetsAt":"2026-10-22T13:32:00.000Z"}}}
+```
+
+Shown as `5h` / `1w` / `30d`, with remaining = `100 - percent`. Only the undecorated keys `percent` and `resetsAt` are read: this is a single official deployment, so no alias guessing. Missing or malformed percentages stay unknown. The endpoint returns no money amounts — the OpenCode console is the only place a dollar balance is visible — and the call itself does not consume Go plan usage. The provider's base URL must stay on `opencode.ai`.
+
 ## Architecture
 
 ```text
-Pi model/auth ──► adapter registry ──► Codex / Kimi / custom query
+Pi model/auth ──► adapter registry ──► Codex / Kimi / OpenCode Go / custom query
                                            │
                                   QuotaSnapshot (plain data)
                                            │
@@ -148,7 +166,7 @@ Pi model/auth ──► adapter registry ──► Codex / Kimi / custom query
 ```
 
 - `src/query/types.ts`: stable, UI-free adapter/data contracts.
-- `src/query/codex.ts`, `kimi.ts`, `new-api.ts`: provider-specific auth, endpoints and parsing. No terminal/Pi imports.
+- `src/query/codex.ts`, `kimi.ts`, `opencode-go.ts`, `new-api.ts`: provider-specific auth, endpoints and parsing. No terminal/Pi imports.
 - `src/config.ts`: strict `settings.json` provider-to-adapter configuration loading.
 - `src/bar/balance.ts`: amount-only rendering, independent of periodic quota gauges.
 - `src/query/http.ts`: injectable GET transport, no redirects, bounded response size, safe error codes.
@@ -204,13 +222,13 @@ For a future independent bar extension, use `createQuotaExtension({ footer: fals
 
 ## Safety and limits
 
-- Codex/Kimi adapters send credentials only to their fixed official origins. They reject custom auth/model base URLs rather than pretending a gateway credential is an official subscription.
+- Codex/Kimi/OpenCode Go adapters send credentials only to their fixed official origins. They reject custom auth/model base URLs rather than pretending a gateway credential is an official subscription.
 - Codex account routing comes from the active Authorization header/JWT (or its explicit runtime account header), never another CLI's auth file. JWT decoding only extracts metadata; server-side authentication verifies the token.
 - No browser-cookie scraping, credential logging, background quota disk cache, model calls, request rewriting, or quota-reset redemption. Explicit `/usage` snapshots persist sanitized quota data in the session; no raw API responses or credentials are stored.
 - The default HTTP client uses Node `fetch`; it does not configure its own proxy. It inherits the process's fetch/dispatcher setup. Custom networking can be injected into the standalone controller/client.
 - Official quota APIs are undocumented and may change. Malformed/absent counts remain unknown or produce a schema error, never fabricated 100%.
 - This covers percentage quota windows and new-api account balances, not Codex credit balances/spend-cap management or Kimi booster wallets.
-- Mocked protocol/lifecycle tests pass; live account authentication and provider endpoints have **not** been verified in this delivery.
+- Mocked protocol/lifecycle tests pass. Live verification covers the OpenCode Go usage endpoint and the new-api dashboard-PAT `/api/user/self` path.
 
 ## Development
 

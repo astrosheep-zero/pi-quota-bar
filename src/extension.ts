@@ -4,6 +4,7 @@ import { captureUsage, USAGE_ENTRY, usageCardComponent } from './bar/card.ts';
 import type { UsageCard } from './bar/card.ts';
 import { codexAdapter } from './query/codex.ts';
 import { kimiAdapter } from './query/kimi.ts';
+import { openCodeGoAdapter } from './query/opencode-go.ts';
 import { QuotaController } from './query/controller.ts';
 import { createJsonClient } from './query/http.ts';
 import { AdapterRegistry } from './query/registry.ts';
@@ -22,7 +23,7 @@ export interface QuotaExtensionOptions {
 
 export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
   return (pi: ExtensionAPI): void => {
-    const registry = new AdapterRegistry([codexAdapter, kimiAdapter, ...(options.adapters ?? [])]);
+    const registry = new AdapterRegistry([codexAdapter, kimiAdapter, openCodeGoAdapter, ...(options.adapters ?? [])]);
     let current: ExtensionContext | undefined;
     let selectedProvider: string | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;

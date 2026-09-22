@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { codexAccountId, codexAdapter, parseCodex } from '../src/query/codex.ts';
 import { kimiAdapter, parseKimi } from '../src/query/kimi.ts';
+import { openCodeGoAdapter, parseOpenCodeGo } from '../src/query/opencode-go.ts';
 import { createJsonClient } from '../src/query/http.ts';
 import { AdapterRegistry, validateSnapshot } from '../src/query/registry.ts';
 import { QuotaError } from '../src/query/types.ts';
@@ -20,6 +21,11 @@ const kimiPayload = {
   limits: [{ window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
     detail: { limit: '100', remaining: '72', resetTime: new Date(now + 8100000).toISOString() } }],
 };
+const openCodeGoPayload = { usage: {
+  rolling: { status: 'ok', percent: 10, resetsAt: '2026-09-22T18:52:04.287Z' },
+  weekly: { status: 'ok', percent: 4, resetsAt: '2026-09-28T00:00:00.000Z' },
+  monthly: { status: 'ok', percent: 2, resetsAt: '2026-10-22T13:32:00.000Z' },
+} };
 const context = (overrides: Partial<QueryContext> = {}): QueryContext => ({
   provider: 'kimi-coding', signal: new AbortController().signal, now: () => now,
   getAuth: async () => ({ apiKey: 'secret' }), getJson: async () => kimiPayload,
@@ -64,6 +70,57 @@ test('Kimi missing or invalid counts and reset timestamps stay unknown', () => {
   }
   assert.equal(parseKimi({ usage: { limit: 100, used: 0 } })[0].remainingPercent, 100);
   assert.throws(() => parseKimi({}), QuotaError);
+});
+
+test('OpenCode Go maps used percent into the three fixed windows', () => {
+  const windows = parseOpenCodeGo(openCodeGoPayload);
+  assert.deepEqual(windows.map(w => [w.id, w.label, w.remainingPercent]), [
+    ['rolling', '5h', 90], ['weekly', '1w', 96], ['monthly', '30d', 98],
+  ]);
+  assert.deepEqual(windows.map(w => w.durationSeconds), [18000, 604800, 2592000]);
+  assert.equal(windows[0].resetAt, Date.parse('2026-09-22T18:52:04.287Z'));
+});
+
+test('OpenCode Go reads only its own field names: no aliases, no unknown windows', () => {
+  // A single official deployment means no alias guessing; unknown keys are ignored.
+  const windows = parseOpenCodeGo({ usage: {
+    rolling: { status: 'ok', usagePercent: 50, resetAt: '2026-09-22T18:52:04.287Z' },
+    hourly: { percent: 5, resetsAt: '2026-09-22T18:52:04.287Z' },
+  } });
+  assert.deepEqual(windows, [{ id: 'rolling', label: '5h', durationSeconds: 18000,
+    remainingPercent: null, resetAt: null }]);
+});
+
+test('OpenCode Go keeps missing percentages unknown and clamps outliers', () => {
+  const windows = parseOpenCodeGo({ usage: {
+    rolling: { status: 'error' }, weekly: { percent: 150 }, monthly: { percent: -10 },
+  } });
+  assert.deepEqual(windows.map(w => w.remainingPercent), [null, 0, 100]);
+  assert.equal(parseOpenCodeGo({ usage: { rolling: { percent: '25' } } })[0].remainingPercent, 75);
+  for (const payload of [null, {}, { usage: {} }, { usage: { hourly: { percent: 1 } } }, { error: 'denied' }]) {
+    assert.throws(() => parseOpenCodeGo(payload), QuotaError);
+  }
+});
+
+test('OpenCode Go uses the official usage endpoint and rejects other origins', async () => {
+  const result = await openCodeGoAdapter.query(context({ provider: 'opencode-go',
+    getAuth: async provider => {
+      assert.equal(provider, 'opencode-go');
+      return { apiKey: 'oc-secret', baseUrl: 'https://opencode.ai/zen/go/v1' };
+    },
+    getJson: async (url, headers) => {
+      assert.equal(url, 'https://opencode.ai/zen/go/v1/usage');
+      assert.equal(headers.Authorization, 'Bearer oc-secret');
+      return openCodeGoPayload;
+    },
+  }));
+  assert.deepEqual(result.windows.map(w => w.label), ['5h', '1w', '30d']);
+  assert.equal(result.fetchedAt, now);
+  const getJson = async () => { assert.fail('Must not send credentials'); };
+  for (const auth of [undefined, { apiKey: 'secret', baseUrl: 'https://proxy.invalid' }]) {
+    await assert.rejects(openCodeGoAdapter.query(context({ provider: 'opencode-go',
+      getAuth: async () => auth, getJson })), QuotaError);
+  }
 });
 
 test('Codex account is derived from the same runtime token, not another auth file', async () => {

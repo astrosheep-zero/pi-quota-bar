@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createNewApiAdapter, newApiRootUrl, parseNewApiBilling, parseNewApiTokenUsage } from '../src/query/new-api.ts';
+import { createNewApiAdapter, newApiRootUrl, parseNewApiBilling, parseNewApiTokenUsage, parseNewApiUserSelf } from '../src/query/new-api.ts';
 import { parseDeepSeekBalance } from '../src/query/deepseek.ts';
 import { QuotaError } from '../src/query/types.ts';
 import type { QueryContext, QuotaState } from '../src/query/types.ts';
@@ -78,6 +78,20 @@ test('URL derivation stays on the configured origin, handles /v1 and subpath ins
   for (const base of [undefined, '', 'invalid', 'http://remote.test/v1', 'file:///tmp/key',
     'https://user:pass@host.test', 'https://host.test?key=secret', 'https://host.test/#fragment']) {
     assert.throws(() => newApiRootUrl(base), QuotaError);
+  }
+});
+
+test('dashboard /api/user/self parses account quota, never inventing missing amounts', () => {
+  assert.deepEqual(parseNewApiUserSelf({ success: true, data: { quota: 27151218, used_quota: 1788848782 } }),
+    { currency: 'USD', remaining: 54.302436, used: 3577.697564 });
+  assert.deepEqual(parseNewApiUserSelf({ success: true, data: { quota: '5000', used_quota: '200' } },
+    { quotaPerUnit: 100, currency: 'CNY' }), { currency: 'CNY', remaining: 50, used: 2 });
+  assert.deepEqual(parseNewApiUserSelf({ success: true, data: { quota: 0, used_quota: 0 } }),
+    { currency: 'USD', remaining: 0, used: 0 });
+  for (const payload of [{}, { success: false }, { success: true, data: { quota: 1 } },
+    { success: true, data: { quota: -1, used_quota: 0 } }, { success: true, data: { quota: 1.5, used_quota: 0 } },
+    { success: true, data: { quota: 1e30, used_quota: 0 } }, { success: true, data: { quota: 0, used_quota: null } }]) {
+    assert.throws(() => parseNewApiUserSelf(payload), QuotaError);
   }
 });
 
@@ -202,12 +216,81 @@ test('config binds explicit provider IDs and validates optional unit/currency se
       .map(item => ({ providers: { gateway: item } })),
     { providers: { 'openai-codex': { adapter: 'new-api' } } },
     { providers: { 'kimi-coding': { adapter: 'new-api' } } },
+    { providers: { 'opencode-go': { adapter: 'new-api' } } },
   ]) {
     assert.throws(() => parseQuotaConfig(value), error => {
       assert.ok(error instanceof QuotaConfigError);
       assert.equal(error.message.includes('SECRET'), false);
       return true;
     });
+  }
+});
+
+test('dashboard PAT is queried first and wins without billing or token lookups', async () => {
+  const seen: string[] = [];
+  const result = await createNewApiAdapter('my-gateway', {
+    dashboardAccessToken: 'PAT-SECRET', dashboardUserId: 42684,
+  }).query(context({ getJson: async (url, headers) => {
+    seen.push(url);
+    assert.equal(url, 'https://gateway.test/api/user/self');
+    assert.deepEqual(headers, { Authorization: 'Bearer PAT-SECRET', 'New-Api-User': '42684' });
+    return { success: true, data: { quota: 27151218, used_quota: 1788848782 } };
+  } }));
+  assert.deepEqual(seen, ['https://gateway.test/api/user/self']);
+  assert.deepEqual(result.balance, { currency: 'USD', remaining: 54.302436, used: 3577.697564 });
+  assert.equal(JSON.stringify(result).includes('PAT-SECRET'), false);
+  // No dashboardUserId: no legacy header on new deployments.
+  await createNewApiAdapter('my-gateway', { dashboardAccessToken: 'PAT-SECRET' }).query(context({
+    getJson: async (_url, headers) => {
+      assert.deepEqual(headers, { Authorization: 'Bearer PAT-SECRET' });
+      return { success: true, data: { quota: 0, used_quota: 0 } };
+    },
+  }));
+});
+
+test('dashboard /api/user/self failure falls through to the billing/token chain', async () => {
+  let calls = 0;
+  const query = createNewApiAdapter('my-gateway', { dashboardAccessToken: 'PAT-SECRET' });
+  const result = await query.query(context({ getJson: async url => {
+    calls++;
+    if (url.endsWith('/api/user/self')) throw new QuotaError('auth'); // PAT expired
+    if (url.endsWith('/subscription')) return { hard_limit_usd: 100 };
+    if (url.includes('/dashboard/billing/usage')) return { total_usage: 5678 };
+    return payload;
+  } }));
+  assert.equal(calls, 3); // user/self + 2 billing; finite hard limit wins without token lookup
+  assert.deepEqual(result.balance, { currency: 'USD', remaining: 43.22, used: 56.78 });
+  calls = 0;
+  await assert.rejects(query.query(context({ getJson: async url => {
+    calls++;
+    if (url.endsWith('/api/user/self')) return { success: false, message: 'nope' }; // old fork shell
+    throw new QuotaError('http');
+  } })), error => error instanceof QuotaError && error.code === 'http');
+  assert.equal(calls, 4);
+});
+
+test('config accepts dashboard PAT options, rejects malformed ones without echoing secrets', () => {
+  const config = parseQuotaConfig({ providers: {
+    micu: { adapter: 'new-api', dashboardAccessToken: 'PAT-SECRET', dashboardUserId: 42684 },
+    plain: { adapter: 'new-api' },
+  } });
+  assert.deepEqual(config.providers.micu, { adapter: 'new-api', quotaPerUnit: 500000, currency: 'USD',
+    dashboardAccessToken: 'PAT-SECRET', dashboardUserId: 42684 });
+  assert.equal(config.providers.plain.dashboardAccessToken, undefined);
+  for (const item of [{ adapter: 'new-api', dashboardAccessToken: '' },
+    { adapter: 'new-api', dashboardAccessToken: 42 },
+    { adapter: 'new-api', dashboardUserId: 0 },
+    { adapter: 'new-api', dashboardUserId: 1.5 },
+    { adapter: 'new-api', dashboardUserId: '42684' },
+    { adapter: 'deepseek', dashboardAccessToken: 'PAT-SECRET' }]) {
+    assert.throws(() => parseQuotaConfig({ providers: { gateway: item } }), error => {
+      assert.ok(error instanceof QuotaConfigError);
+      assert.equal(error.message.includes('PAT-SECRET'), false);
+      return true;
+    });
+  }
+  for (const options of [{ dashboardAccessToken: ' ' }, { dashboardUserId: -1 }, { dashboardUserId: NaN }]) {
+    assert.throws(() => createNewApiAdapter('a', options));
   }
 });
 

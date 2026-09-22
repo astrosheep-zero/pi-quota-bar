@@ -6,6 +6,22 @@ import type { QuotaAdapter } from './query/types.ts';
 export interface ProviderQuotaConfig extends NewApiOptions { adapter: 'new-api' | 'deepseek' }
 export interface QuotaConfig { providers: Record<string, ProviderQuotaConfig> }
 
+const DASHBOARD_KEYS = ['dashboardAccessToken', 'dashboardUserId'] as const;
+
+function parseDashboardOptions(item: Record<string, unknown>): Pick<NewApiOptions, 'dashboardAccessToken' | 'dashboardUserId'> {
+  const result: Pick<NewApiOptions, 'dashboardAccessToken' | 'dashboardUserId'> = {};
+  if (item.dashboardAccessToken !== undefined) {
+    if (typeof item.dashboardAccessToken !== 'string' || item.dashboardAccessToken.trim() === '') throw new QuotaConfigError();
+    result.dashboardAccessToken = item.dashboardAccessToken;
+  }
+  if (item.dashboardUserId !== undefined) {
+    if (typeof item.dashboardUserId !== 'number'
+      || !Number.isSafeInteger(item.dashboardUserId) || item.dashboardUserId <= 0) throw new QuotaConfigError();
+    result.dashboardUserId = item.dashboardUserId;
+  }
+  return result;
+}
+
 export class QuotaConfigError extends Error {
   constructor() {
     // Settings may accidentally contain secrets. Never echo content/values.
@@ -23,7 +39,7 @@ export function parseQuotaConfig(value: unknown): QuotaConfig {
   const providers: Record<string, ProviderQuotaConfig> = Object.create(null);
   for (const [provider, item] of Object.entries(value.providers)) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(provider)
-      || ['openai-codex', 'kimi-coding'].includes(provider)
+      || ['openai-codex', 'kimi-coding', 'opencode-go'].includes(provider)
       || !record(item)) throw new QuotaConfigError();
     if (item.adapter === 'deepseek') {
       if (Object.keys(item).some(key => key !== 'adapter')) throw new QuotaConfigError();
@@ -31,12 +47,12 @@ export function parseQuotaConfig(value: unknown): QuotaConfig {
       continue;
     }
     if (item.adapter !== 'new-api'
-      || Object.keys(item).some(key => !['adapter', 'quotaPerUnit', 'currency'].includes(key))
+      || Object.keys(item).some(key => !['adapter', 'quotaPerUnit', 'currency', ...DASHBOARD_KEYS].includes(key))
       || (item.quotaPerUnit !== undefined && typeof item.quotaPerUnit !== 'number')
       || (item.currency !== undefined && typeof item.currency !== 'string')) throw new QuotaConfigError();
     try {
       const settings = validateNewApiOptions({ quotaPerUnit: item.quotaPerUnit, currency: item.currency });
-      providers[provider] = { adapter: 'new-api', ...settings };
+      providers[provider] = { adapter: 'new-api', ...settings, ...parseDashboardOptions(item) };
     } catch { throw new QuotaConfigError(); }
   }
   return { providers };

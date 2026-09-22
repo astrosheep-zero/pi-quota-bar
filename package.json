@@ -1,6 +1,6 @@
 {
   "name": "pi-quota-bar",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "module",
   "description": "Composable quota bar with Codex, Kimi, new-api and DeepSeek query adapters",
   "keywords": [
