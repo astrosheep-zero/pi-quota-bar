@@ -41,12 +41,12 @@ Use the **exact Pi provider ID**. Only selected, explicitly bound providers are 
 | Adapter | Endpoint | Result |
 |---|---|---|
 | `sub2api` | `{baseUrl}/usage` | Wallet, key quota, rate windows or subscription day/week/month windows; API-key Today/Lifetime actual spend |
-| `new-api` | Account PAT `/api/user/self`, falling back to key-native billing/token endpoints | Account or key balance; **not** a renewable window |
+| `new-api` | Account PAT `/api/user/self`, falling back to key-native billing/token endpoints | Account balance + lifetime spend; finite key quota when explicitly granted; **not** a renewable window |
 | `deepseek` | Official `/user/balance` | Balance only; no invented spend |
 
 Sub2API accepts no extra settings; it preserves deployment subpaths. Rate-only keys need not expose a top-level currency (rates are USD). Unknown rate-window durations and invalid limits fail rather than inventing a 1d window. Subscription periods without a cap are omitted. Its dashboard `/api/v1/usage` is a separate, JWT-authenticated paginated request log; the adapter uses the API-key `/v1/usage` instead.
 
-For new-api, `quotaPerUnit` defaults to `500000`, `currency` to `USD`. Optionally add `dashboardAccessToken` (console system access token) and `dashboardUserId` (positive numeric ID required by some old forks) to that provider. This PAT is the **only** optional secret kept in settings. The account endpoint takes precedence; failures fall back to the key-native billing and token usage paths. Without a PAT, an API key cannot read the dashboard account quota. Values in settings and server error bodies are never logged.
+For new-api, `quotaPerUnit` defaults to `500000`, `currency` to `USD`. Optionally add `dashboardAccessToken` (console system access token) and `dashboardUserId` (positive numeric ID required by some old forks) to that provider. This PAT is the **only** optional secret kept in settings. The account endpoint takes precedence; failures fall back to the key-native billing and token usage paths. Without a PAT, an API key cannot read the dashboard account quota. A finite key reports a quota bar only when `total_granted` is present and consistent with used plus remaining; otherwise it shows a balance and lifetime spend, without inventing a limit. Values in settings and server error bodies are never logged.
 
 Authenticated quota URLs must use HTTPS, except HTTP loopback for local deployments. URL userinfo, query strings, fragments and HTTP redirects are rejected; credentials never follow redirects. Fixed official endpoints reject custom origins. No browser cookie scraping or credential discovery.
 

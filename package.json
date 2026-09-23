@@ -1,6 +1,6 @@
 {
   "name": "@astrosheep/pi-quota",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publishConfig": { "access": "public" },
   "type": "module",
   "description": "Composable quota bar with Codex, Kimi, OpenCode Go, new-api, DeepSeek and Sub2API adapters",

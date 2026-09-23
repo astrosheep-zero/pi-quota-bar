@@ -154,7 +154,7 @@ test('new-api works through Pi auth, controller, footer and persistent /usage it
   await h.commands.get('usage')!.handler('', h.ctx);
   assert.equal(h.entries.length, 1);
   assert.deepEqual(usageCardComponent(h.entries[0].data).render(80).map(line => line.trimEnd()), [
-    'my-gateway · Balance', '', 'Balance   $12.34',
+    'my-gateway · Account', '', 'Balance   $12.34', '', 'Lifetime  $56.78',
   ]);
 });
 
