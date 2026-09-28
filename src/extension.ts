@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { renderFooter, renderUsage } from './bar/quota.ts';
-import { captureUsage, USAGE_ENTRY, usageCardComponent } from './bar/card.ts';
+import { renderFooter } from './bar/quota.ts';
+import { captureAllUsage, USAGE_ENTRY, usageCardComponent, usageLines } from './bar/card.ts';
 import type { UsageCard } from './bar/card.ts';
 import { codexAdapter } from './query/codex.ts';
 import { kimiAdapter } from './query/kimi.ts';
@@ -8,7 +8,7 @@ import { openCodeGoAdapter } from './query/opencode-go.ts';
 import { QuotaController } from './query/controller.ts';
 import { createJsonClient } from './query/http.ts';
 import { AdapterRegistry } from './query/registry.ts';
-import type { ProviderAuth, QuotaAdapter } from './query/types.ts';
+import type { ProviderAuth, QuotaAdapter, QuotaState } from './query/types.ts';
 
 export const STATUS_EVENT = 'quota-bar:state:v1';
 const STATUS_KEY = 'quota-bar';
@@ -58,29 +58,64 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
       }
     };
 
+    const getJson = createJsonClient();
+
     const controller = new QuotaController({
-      registry, getJson: createJsonClient(), intervalMs: options.intervalMs, timeoutMs: options.timeoutMs,
+      registry, getJson, intervalMs: options.intervalMs, timeoutMs: options.timeoutMs,
       onState(state) {
         paintFooter();
         pi.events.emit(STATUS_EVENT, state); // Structured data, no credentials or ANSI.
       },
     });
 
+    const resolveAuth = (ctx: ExtensionContext) => async (provider: string): Promise<ProviderAuth | undefined> => {
+      const resolved = await ctx.modelRegistry.getProviderAuth(provider);
+      if (!resolved) return undefined;
+      const headers: Record<string, string | undefined> = {};
+      for (const [name, value] of Object.entries(resolved.auth.headers ?? {})) {
+        if (typeof value === 'string') headers[name] = value;
+      }
+      const auth: ProviderAuth = { ...resolved.auth, headers };
+      // A model-level custom endpoint must not be mistaken for an official account.
+      if (ctx.model?.provider === provider && ctx.model.baseUrl) auth.baseUrl = ctx.model.baseUrl;
+      return auth;
+    };
+
     const refresh = (force = false): Promise<void> => {
       const ctx = current;
       if (!ctx?.hasUI) return Promise.resolve();
-      return controller.refresh(async provider => {
-        const resolved = await ctx.modelRegistry.getProviderAuth(provider);
-        if (!resolved) return undefined;
-        const headers: Record<string, string | undefined> = {};
-        for (const [name, value] of Object.entries(resolved.auth.headers ?? {})) {
-          if (typeof value === 'string') headers[name] = value;
+      return controller.refresh(resolveAuth(ctx), force);
+    };
+
+    const supportedProviders = (ctx: ExtensionContext): string[] => {
+      const providers: string[] = [];
+      const seen = new Set<string>();
+      const add = (provider: string | undefined) => {
+        if (provider && registry.get(provider) && !seen.has(provider)) {
+          seen.add(provider);
+          providers.push(provider);
         }
-        const auth: ProviderAuth = { ...resolved.auth, headers };
-        // A model-level custom endpoint must not be mistaken for an official account.
-        if (ctx.model?.provider === provider && ctx.model.baseUrl) auth.baseUrl = ctx.model.baseUrl;
-        return auth;
-      }, force);
+      };
+      add(ctx.model?.provider);
+      for (const model of ctx.modelRegistry.getAll()) add(model.provider);
+      return providers;
+    };
+
+    const queryProvider = async (provider: string, getAuth: ReturnType<typeof resolveAuth>): Promise<QuotaState> => {
+      const adapter = registry.get(provider);
+      if (!adapter) return { kind: 'error', provider, label: provider, code: 'unsupported-auth' };
+      if (provider === selectedProvider) {
+        // The footer already owns this provider's lifecycle and cache; do not fork it.
+        await controller.refresh(getAuth, true);
+        return controller.state;
+      }
+      const scratch = new QuotaController({
+        registry, getJson, intervalMs: options.intervalMs, timeoutMs: options.timeoutMs,
+        onState() {},
+      });
+      scratch.select(provider);
+      await scratch.refresh(getAuth, true);
+      return scratch.state;
     };
 
     const bind = (ctx: ExtensionContext, select = false, provider = ctx.model?.provider) => {
@@ -122,23 +157,24 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
     });
 
     pi.registerCommand('usage', {
-      description: 'Query current provider quota and add a snapshot to the chat history',
+      description: 'Query quota for every configured supported provider and add snapshots to the chat history',
       handler: async (_args, ctx) => {
         if (!ctx.hasUI) return;
         bind(ctx);
         const generation = ++commandGeneration;
-        if (ctx.mode === 'tui') ctx.ui.setWidget(USAGE_WIDGET, ['Loading…']);
+        if (ctx.mode === 'tui') ctx.ui.setWidget(USAGE_WIDGET, ['Quota …']);
         try {
-          await refresh(true);
+          const getAuth = resolveAuth(ctx);
+          const providers = supportedProviders(ctx);
+          const states = await Promise.all(providers.map(provider => queryProvider(provider, getAuth)));
           // Never append via a stale Pi runtime, or label a replacement model's data
           // as the result of the original command. A newer command owns its result.
           if (!current || generation !== commandGeneration) return;
-          const card = captureUsage(controller.state);
-          if (!card) return;
+          const card = captureAllUsage(states);
           pi.appendEntry<UsageCard>(USAGE_ENTRY, card);
           // Custom entry renderers are TUI-only; RPC clients still get readable output.
           if (ctx.mode !== 'tui') {
-            ctx.ui.notify(renderUsage(card.state, undefined, card.capturedAt).join('\n'), 'info');
+            ctx.ui.notify(usageLines(card, undefined).join('\n'), 'info');
           }
         } finally {
           // An older request must not clear a newer command's loading indicator.

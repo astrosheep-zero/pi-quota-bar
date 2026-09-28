@@ -19,6 +19,10 @@ export class AdapterRegistry {
   get(provider: string | undefined): QuotaAdapter | undefined {
     return provider ? this.adapters.get(provider) : undefined;
   }
+
+  list(): readonly QuotaAdapter[] {
+    return [...this.adapters.values()];
+  }
 }
 
 // Validate even custom adapter output before it reaches the bar.

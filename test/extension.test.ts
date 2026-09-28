@@ -20,11 +20,11 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
   let requests = 0;
   let lastUrl = '';
   const originalFetch = globalThis.fetch;
-  let respond: () => Promise<Response> = async () => new Response(JSON.stringify({
+  let respond: (url: string) => Promise<Response> = async () => new Response(JSON.stringify({
     usage: { limit: 100, used: 15, resetTime: '2099-01-01T00:00:00Z' },
     limits: [{ window: { duration: 5, timeUnit: 'TIME_UNIT_HOUR' }, detail: { limit: 100, used: 28 } }],
   }));
-  globalThis.fetch = async (input: unknown) => { requests++; lastUrl = String(input); return respond(); };
+  globalThis.fetch = async (input: unknown) => { requests++; lastUrl = String(input); return respond(lastUrl); };
   const pi = {
     on: (name: string, handler: Handler) => handlers.set(name, handler),
     registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => commands.set(name, command),
@@ -42,14 +42,17 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
   };
   const ctx = {
     mode, hasUI: mode === 'tui' || mode === 'rpc', model: { provider: 'kimi-coding', baseUrl: 'https://api.kimi.com/coding' },
-    modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: 'TEST-SECRET' } }) }, ui,
+    modelRegistry: {
+      getProviderAuth: async () => ({ auth: { apiKey: 'TEST-SECRET' } }),
+      getAll: () => ctx.model ? [ctx.model] : [],
+    }, ui,
   } as unknown as ExtensionContext;
   createQuotaExtension({ adapters })(pi);
   return {
     ctx, ui, statuses, commands, emitted, entries, renderers,
     requests: () => requests,
     lastUrl: () => lastUrl,
-    respondWith: (responder: () => Promise<Response>) => { respond = responder; },
+    respondWith: (responder: (url: string) => Promise<Response>) => { respond = responder; },
     emit: (name: string, event: unknown = {}) => handlers.get(name)?.(event, ctx),
     cleanup: () => {
       handlers.get('session_shutdown')?.({}, ctx);
@@ -93,7 +96,7 @@ test('noninteractive mode never queries or starts visible status work', async t 
   assert.equal(h.statuses.length, 0);
 });
 
-test('/usage appends a durable horizontal-bar item without opening UI or sending model messages', async t => {
+test('/usage appends durable horizontal-bar items without opening UI or sending model messages', async t => {
   const h = harness();
   t.after(h.cleanup);
   assert.ok(h.renderers.has(USAGE_ENTRY));
@@ -118,6 +121,40 @@ test('/usage appends a durable horizontal-bar item without opening UI or sending
   assert.equal(JSON.stringify(h.entries[0]), original);
   // Session persistence round trip: renderer does not need live controller state.
   assert.deepEqual(usageCardComponent(JSON.parse(original).data).render(80), lines);
+});
+
+test('/usage aggregates every configured supported provider', async t => {
+  const adapter: QuotaAdapter = {
+    provider: 'my-gateway', label: 'Gateway',
+    async query({ now }) {
+      return { fetchedAt: now(), windows: [], balance: { currency: 'USD', remaining: 12.34 } };
+    },
+  };
+  const h = harness('tui', [adapter]);
+  t.after(h.cleanup);
+  const registry = h.ctx.modelRegistry as unknown as { getAll: () => unknown[] };
+  registry.getAll = () => [
+    h.ctx.model,
+    { provider: 'my-gateway', id: 'gateway-model' },
+    { provider: 'unsupported', id: 'unsupported-model' },
+  ];
+  h.emit('session_start');
+  await tick();
+  const footer = h.statuses.at(-1);
+  await h.commands.get('usage')!.handler('', h.ctx);
+  assert.equal(h.entries.length, 1);
+  assert.equal(h.entries[0].data.version, 2);
+  const card = usageCardComponent(h.entries[0].data);
+  const lines = card.render(100);
+  const text = lines.join('\n');
+  assert.ok(text.includes('Kimi · Remaining quota'));
+  assert.ok(text.includes('Gateway · Balance'));
+  assert.ok(text.includes('$12.34'));
+  assert.equal(text.includes('unsupported'), false);
+  for (const width of [0, 1, 10, 30, 50, 100]) {
+    assert.ok(card.render(width).every(line => visibleWidth(line) <= width));
+  }
+  assert.equal(h.statuses.at(-1), footer); // aggregate view must not hijack the current-provider footer
 });
 
 for (const event of ['session_shutdown', 'model_select']) {
@@ -166,7 +203,10 @@ test('a failed /usage query appends an honest error snapshot, not fake quota', a
   h.respondWith(async () => new Response('SECRET', { status: 401 }));
   await h.commands.get('usage')!.handler('', h.ctx);
   assert.equal(h.entries.length, 1);
-  assert.equal(h.entries[0].data.state.kind, 'error');
+  const entry = h.entries[0].data;
+  assert.equal(entry.version, 2);
+  if (entry.version !== 2) assert.fail('expected aggregate card');
+  assert.equal(entry.states[0]?.kind, 'error');
   const text = usageCardComponent(h.entries[0].data).render(80).join('\n');
   assert.ok(text.includes('Sign in with /login'));
   assert.equal(text.includes('SECRET'), false);

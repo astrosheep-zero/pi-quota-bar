@@ -6,7 +6,7 @@ Compact quota status for Pi: Codex, Kimi and OpenCode Go work out of the box; ne
 pi install npm:@astrosheep/pi-quota
 ```
 
-Reload Pi after installing or changing settings. Use `/usage` for a persistent, context-free snapshot in the chat history. Automatic footer polling never adds chat items.
+Reload Pi after installing or changing settings. Use `/usage` for a persistent, context-free snapshot covering every configured provider with a quota adapter, including the current one. Automatic footer polling never adds chat items.
 
 ## What it shows
 
@@ -18,7 +18,7 @@ Reload Pi after installing or changing settings. Use `/usage` for a persistent, 
 
 A percentage always means **remaining**, not used. Unknown is `[?] ?`; an expired reset is `↺ due` with the stale percentage hidden until the next successful query. A wallet balance never becomes a percentage. Historical spend is not a quota.
 
-The footer shows at most two windows and `+N` for additional ones. `/usage` includes all windows; it does not open a modal or send messages to the model. Snapshots remain frozen at capture time. Errors replace stale values.
+The footer shows at most two windows and `+N` for additional ones, for the current provider only. `/usage` queries all configured supported providers and includes all windows, grouped by provider; it does not open a modal or send messages to the model. Snapshots remain frozen at capture time. Errors replace stale values and are shown per provider.
 
 ## Configure providers
 
@@ -58,12 +58,12 @@ Pi model/auth → adapter → QuotaSnapshot → controller → footer / /usage /
 
 - `src/query/`: protocol-specific parsing, credential resolution, safe URLs, bounded GET client, state validation and controller. No Pi/TUI imports.
 - `src/config.ts`: strict global provider bindings.
-- `src/bar/`: pure compact rendering and persistent chat card.
+- `src/bar/`: pure compact rendering and persistent multi-provider chat card.
 - `src/extension.ts` and `src/index.ts`: Pi lifecycle and auth bridge.
 
 `QuotaSnapshot` separates `balance` (wallet), `allowance` (finite key quota), `windows` (renewable limits), and optional `spend` (Today/Lifetime actual charge). This prevents unrelated amounts from sharing an ambiguous `Used` label. Custom adapters can be passed to `createQuotaExtension({ adapters: [...] })`; see `examples/custom-provider.ts`. Provider aliases are never inferred.
 
-The extension publishes structured state on `quota-bar:state:v1`. Use `createQuotaExtension({ footer: false })` to consume it without this extension's footer. Normal queries are throttled, cancellable, timeout-bounded and backed off after errors. `/usage` forces a fresh query. Switching provider discards old values immediately.
+The extension publishes structured state on `quota-bar:state:v1`. Use `createQuotaExtension({ footer: false })` to consume it without this extension's footer. Normal queries are throttled, cancellable, timeout-bounded and backed off after errors. `/usage` forces a fresh query for every configured supported provider. Switching provider discards old footer values immediately.
 
 ## Development
 
