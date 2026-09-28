@@ -46,16 +46,14 @@ export function renderFooter(state: QuotaState, paint: Paint = plain, now = Date
   return renderBar([quotaElement(state, now)], paint);
 }
 
-export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.now(), barWidth = 20): string[] {
+const displayLabel: Record<string, string> = { deepseek: 'DeepSeek' };
+
+export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.now(), barWidth = 16): string[] {
   if (state.kind === 'hidden') return ['No quota adapter for the current provider.'];
-  const balanceOnly = state.kind === 'ready' && state.snapshot.balance
-    && !state.snapshot.allowance && state.snapshot.windows.length === 0;
-  const spendOnly = state.kind === 'ready' && state.snapshot.spend
-    && !state.snapshot.balance && !state.snapshot.allowance && state.snapshot.windows.length === 0;
-  const title = `${state.label} · ${balanceOnly ? (state.snapshot.spend ? 'Account' : 'Balance')
-    : spendOnly ? 'Usage' : 'Remaining quota'}`;
-  if (state.kind === 'loading') return [title, '', 'Loading…'];
-  if (state.kind === 'error') return [title, '', errorText[state.code]];
+  const title = displayLabel[state.provider] ?? state.label;
+  const indent = (line: string) => line ? `  ${line}` : line;
+  if (state.kind === 'loading') return [title, '', indent('Loading…')];
+  if (state.kind === 'error') return [title, '', indent(errorText[state.code])];
   const rows = state.snapshot.windows.map(window => {
     const remaining = window.resetAt !== null && window.resetAt <= now ? null : window.remainingPercent;
     return {
@@ -69,26 +67,25 @@ export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.
   const labelWidth = Math.max(0, ...rows.map(row => visibleWidth(row.label)));
   const valueWidth = Math.max(4, ...rows.map(row => visibleWidth(row.value)));
   const lines = [title, '', ...rows.map(row => {
-    const label = row.label + ' '.repeat(labelWidth - visibleWidth(row.label));
-    const value = ' '.repeat(valueWidth - visibleWidth(row.value)) + row.value;
     const tone = remainingTone(row.remaining);
-    return paint('dim', `${label}  `)
+    const value = ' '.repeat(valueWidth - visibleWidth(row.value)) + row.value;
+    return indent(paint('dim', `${row.label}${' '.repeat(labelWidth - visibleWidth(row.label))}  `)
       + paint(tone, `${horizontalBar(row.remaining, barWidth)} ${value}`)
       + paint('dim', ` ↺ ${row.reset}${row.amounts
         ? ` · ${money(row.amounts.remaining, row.amounts.currency)}/${money(row.amounts.limit, row.amounts.currency)}`
-        : ''}`);
+        : ''}`));
   })];
   if (state.snapshot.allowance) {
     if (rows.length) lines.push('');
-    lines.push(...allowanceLines(state.snapshot.allowance, paint, barWidth));
+    lines.push(...allowanceLines(state.snapshot.allowance, paint, barWidth).map(indent));
   }
   if (state.snapshot.balance) {
     if (rows.length || state.snapshot.allowance) lines.push('');
-    lines.push(...balanceLines(state.snapshot.balance, paint));
+    lines.push(...balanceLines(state.snapshot.balance, paint).map(indent));
   }
-  if (state.snapshot.spend) {
+  if (state.snapshot.spend?.today !== undefined) {
     if (rows.length || state.snapshot.allowance || state.snapshot.balance) lines.push('');
-    lines.push(...spendLines(state.snapshot.spend, paint));
+    lines.push(...spendLines(state.snapshot.spend, paint).map(indent));
   }
   return lines;
 }

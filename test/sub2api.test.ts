@@ -29,7 +29,7 @@ test('wallet balance and API-key spend have different labels; spend stays out of
   });
   assert.equal(renderFooter(result), 'Bal $940.00 ');
   assert.deepEqual(renderUsage(result), [
-    'gateway · Account', '', 'Balance   $940.00', '', 'Today     $2.50', 'Lifetime  $80.00',
+    'gateway', '', '  Balance   $940.00', '', '  Today     $2.50',
   ]);
 });
 

@@ -77,3 +77,6 @@ export function loadQuotaAdaptersFromSettings(settings: unknown): QuotaAdapter[]
     }
   });
 }
+
+  // Explicit adapter bindings from quotaUsage already have adapters registered; listing every
+  // registered adapter is the boundary between quota providers and ordinary model providers.

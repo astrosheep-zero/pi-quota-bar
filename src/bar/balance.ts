@@ -4,21 +4,29 @@ import type { Paint, Span } from './bar.ts';
 
 export function money(amount: number, currency: string): string {
   const sign = amount < 0 ? '-' : '';
-  const prefix = currency === 'USD' ? '$' : `${currency} `;
+  const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
   const absolute = Math.abs(amount);
-  if (absolute > 0 && absolute < 0.01) return `${sign}<${prefix}0.01`;
-  return `${sign}${prefix}${absolute.toFixed(2)}`;
+  if (absolute > 0 && absolute < 0.01) return `${sign}<${symbol}0.01`;
+  return `${sign}${symbol}${absolute.toFixed(2)}`;
 }
 
 export function remainingMoney(balance: AccountBalance): string {
-  if (balance.unlimited === true) return balance.currency === 'USD' ? '$∞' : `${balance.currency} ∞`;
+  if (balance.unlimited === true) return balance.currency === 'CNY' ? '¥∞' : balance.currency === 'USD' ? '$∞' : `${balance.currency} ∞`;
   return money(balance.remaining, balance.currency);
+}
+
+export function compactMoney(amount: number, currency: string): string {
+  return money(amount, currency);
+}
+
+export function compactRemainingMoney(balance: AccountBalance): string {
+  return remainingMoney(balance);
 }
 
 export function balanceSpans(balance: AccountBalance): Span[] {
   return [
     { text: 'Bal ', tone: 'dim' },
-    { text: remainingMoney(balance), tone: !balance.unlimited && balance.remaining <= 0 ? 'error' : 'text' },
+    { text: compactRemainingMoney(balance), tone: !balance.unlimited && balance.remaining <= 0 ? 'error' : 'text' },
   ];
 }
 
@@ -35,7 +43,7 @@ export function allowanceSpans(allowance: QuotaAllowance): Span[] {
   const remaining = allowancePercent(allowance);
   return [
     { text: 'Quota ', tone: 'dim' },
-    { text: `${verticalBar(remaining)} ${money(allowance.remaining, allowance.currency)}`, tone: remainingTone(remaining) },
+    { text: `${verticalBar(remaining)} ${compactMoney(allowance.remaining, allowance.currency)}`, tone: remainingTone(remaining) },
   ];
 }
 
@@ -52,6 +60,5 @@ export function allowanceLines(allowance: QuotaAllowance, paint: Paint, barWidth
 export function spendLines(spend: SpendSummary, paint: Paint): string[] {
   const lines: string[] = [];
   if (spend.today !== undefined) lines.push(paint('dim', `Today     ${money(spend.today, spend.currency)}`));
-  if (spend.lifetime !== undefined) lines.push(paint('dim', `Lifetime  ${money(spend.lifetime, spend.currency)}`));
   return lines;
 }

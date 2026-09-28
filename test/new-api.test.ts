@@ -197,7 +197,7 @@ test('balance display is compact, aligned, without fabricated bars, percentages 
     snapshot: { windows: [], balance, fetchedAt: 100000 } };
   assert.equal(renderFooter(state), 'Bal $12.34 ');
   assert.deepEqual(renderUsage(state), [
-    'my-gateway · Balance', '', 'Balance   $12.34',
+    'my-gateway', '', '  Balance   $12.34',
   ]);
   const card = captureUsage(state, 100001)!;
   assert.deepEqual(usageCardComponent(JSON.parse(JSON.stringify(card))).render(80).map(line => line.trimEnd()), renderUsage(state));
@@ -206,10 +206,10 @@ test('balance display is compact, aligned, without fabricated bars, percentages 
   const unlimited: QuotaState = { ...state, snapshot: { ...state.snapshot,
     balance: { currency: 'USD', remaining: 0, unlimited: true } } };
   assert.equal(renderFooter(unlimited), 'Bal $∞ ');
-  assert.deepEqual(renderUsage(unlimited).slice(2), ['Balance   $∞']);
+  assert.deepEqual(renderUsage(unlimited).slice(2), ['  Balance   $∞']);
   const zero: QuotaState = { ...state, snapshot: { ...state.snapshot,
     balance: { currency: 'USD', remaining: 0 } } };
-  assert.deepEqual(renderUsage(zero).slice(2), ['Balance   $0.00']);
+  assert.deepEqual(renderUsage(zero).slice(2), ['  Balance   $0.00']);
   const calls: string[] = [];
   renderFooter(zero, (tone, text) => { if (text === '$0.00') calls.push(tone); return text; });
   assert.deepEqual(calls, ['error']);
@@ -219,13 +219,13 @@ test('key allowance shows a finite bar, while account spend never appears in the
   const key: QuotaState = { kind: 'ready', provider: 'key', label: 'key',
     snapshot: { windows: [], allowance: keyAllowance, fetchedAt: 100000 } };
   assert.equal(renderFooter(key), 'Quota [▁] $12.34 ');
-  assert.deepEqual(renderUsage(key), ['key · Remaining quota', '',
-    '[████░░░░░░░░░░░░░░░░]  $12.34 left', 'Used      $56.78', 'Limit     $69.12']);
+  assert.deepEqual(renderUsage(key), ['key', '',
+    '  [███░░░░░░░░░░░░░]  $12.34 left', '  Used      $56.78', '  Limit     $69.12']);
   assert.equal(renderUsage(key).join('\n').includes('↺'), false);
   const account: QuotaState = { kind: 'ready', provider: 'account', label: 'account',
     snapshot: { windows: [], balance, spend: { currency: 'USD', lifetime: 56.78 }, fetchedAt: 100000 } };
   assert.equal(renderFooter(account), 'Bal $12.34 ');
-  assert.deepEqual(renderUsage(account), ['account · Account', '', 'Balance   $12.34', '', 'Lifetime  $56.78']);
+  assert.deepEqual(renderUsage(account), ['account', '', '  Balance   $12.34']);
 });
 
 test('config binds explicit provider IDs and validates optional unit/currency settings', () => {

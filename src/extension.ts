@@ -3,6 +3,7 @@ import { renderFooter } from './bar/quota.ts';
 import { captureAllUsage, USAGE_ENTRY, usageCardComponent, usageLines } from './bar/card.ts';
 import type { UsageCard } from './bar/card.ts';
 import { codexAdapter } from './query/codex.ts';
+import { createDeepSeekAdapter } from './query/deepseek.ts';
 import { kimiAdapter } from './query/kimi.ts';
 import { openCodeGoAdapter } from './query/opencode-go.ts';
 import { QuotaController } from './query/controller.ts';
@@ -16,6 +17,7 @@ const USAGE_WIDGET = 'quota-bar:usage';
 
 export interface QuotaExtensionOptions {
   adapters?: readonly QuotaAdapter[]; // Extra adapters; duplicate IDs are rejected.
+  providers?: readonly string[]; // Extra configured quota providers to include in /usage
   footer?: boolean; // false: query + /usage + structured events only
   intervalMs?: number;
   timeoutMs?: number;
@@ -23,7 +25,8 @@ export interface QuotaExtensionOptions {
 
 export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
   return (pi: ExtensionAPI): void => {
-    const registry = new AdapterRegistry([codexAdapter, kimiAdapter, openCodeGoAdapter, ...(options.adapters ?? [])]);
+    const registry = new AdapterRegistry([codexAdapter, kimiAdapter, openCodeGoAdapter,
+      createDeepSeekAdapter('deepseek'), ...(options.adapters ?? [])]);
     let current: ExtensionContext | undefined;
     let selectedProvider: string | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -97,7 +100,8 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
         }
       };
       add(ctx.model?.provider);
-      for (const model of ctx.modelRegistry.getAll()) add(model.provider);
+      for (const adapter of registry.list()) add(adapter.provider);
+      for (const provider of options.providers ?? []) add(provider);
       return providers;
     };
 

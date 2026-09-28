@@ -21,11 +21,12 @@ test('exact requested footer: English, brackets, arrow spacing, no provider/rema
   assert.equal(text.includes('Remaining'), false);
 });
 
-test('/usage uses horizontal bars and includes provider and meaning', () => {
+test('/usage uses compact horizontal bars and provider grouping', () => {
   const lines = renderUsage(state, undefined, now);
-  assert.equal(lines[0], 'Codex · Remaining quota');
-  assert.equal(lines[2], '5h  [██████████████░░░░░░]  72% ↺ 2h15m');
-  assert.equal(lines[3], '1w  [█████████████████░░░]  85% ↺ 5d3h');
+  assert.equal(lines[0], 'Codex');
+  assert.equal(lines[1], '');
+  assert.equal(lines[2], '  5h  [████████████░░░░]  72% ↺ 2h15m');
+  assert.equal(lines[3], '  1w  [██████████████░░]  85% ↺ 5d3h');
   assert.equal(lines.length, 4);
 });
 
@@ -100,5 +101,5 @@ test('footer bounds window count, details retain model-specific windows', () => 
     { ...state.snapshot.windows[0], id: 'model', scope: 'GPT-X', remainingPercent: 5 },
   ] } };
   assert.ok(renderFooter(extra, undefined, now).endsWith(' +1 '));
-  assert.ok(renderUsage(extra, undefined, now).some(line => line.startsWith('GPT-X/5h ')));
+  assert.ok(renderUsage(extra, undefined, now).some(line => line.startsWith('  GPT-X/5h ')));
 });

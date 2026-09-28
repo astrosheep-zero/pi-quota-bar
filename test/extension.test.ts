@@ -109,8 +109,8 @@ test('/usage appends durable horizontal-bar items without opening UI or sending 
   assert.equal(JSON.stringify(h.entries).includes('TEST-SECRET'), false);
   const card = usageCardComponent(h.entries[0].data);
   const lines = card.render(80);
-  assert.ok(lines.some(line => line.includes('Kimi · Remaining quota')));
-  assert.ok(lines.some(line => line.includes('[██████████████░░░░░░]  72%')));
+  assert.ok(lines.some(line => line.includes('Kimi')));
+  assert.ok(lines.some(line => /\[█+░+\]\s+72%/.test(line)), lines.join('\n'));
   assert.ok(lines.every(line => !/Snapshot |Updated |Time until reset|Run \/usage/.test(line)));
   for (const width of [0, 1, 10, 30, 50, 80]) {
     assert.ok(card.render(width).every(line => visibleWidth(line) <= width));
@@ -123,7 +123,7 @@ test('/usage appends durable horizontal-bar items without opening UI or sending 
   assert.deepEqual(usageCardComponent(JSON.parse(original).data).render(80), lines);
 });
 
-test('/usage aggregates every configured supported provider', async t => {
+test('/usage aggregates every quota provider, not every model provider', async t => {
   const adapter: QuotaAdapter = {
     provider: 'my-gateway', label: 'Gateway',
     async query({ now }) {
@@ -136,6 +136,7 @@ test('/usage aggregates every configured supported provider', async t => {
   registry.getAll = () => [
     h.ctx.model,
     { provider: 'my-gateway', id: 'gateway-model' },
+    { provider: 'codex-for', id: 'codex-for-model' },
     { provider: 'unsupported', id: 'unsupported-model' },
   ];
   h.emit('session_start');
@@ -147,9 +148,11 @@ test('/usage aggregates every configured supported provider', async t => {
   const card = usageCardComponent(h.entries[0].data);
   const lines = card.render(100);
   const text = lines.join('\n');
-  assert.ok(text.includes('Kimi · Remaining quota'));
-  assert.ok(text.includes('Gateway · Balance'));
+  assert.ok(text.includes('Kimi'));
+  assert.ok(text.includes('DeepSeek'));
+  assert.ok(text.includes('Gateway'));
   assert.ok(text.includes('$12.34'));
+  assert.equal(text.includes('codex-for'), false);
   assert.equal(text.includes('unsupported'), false);
   for (const width of [0, 1, 10, 30, 50, 100]) {
     assert.ok(card.render(width).every(line => visibleWidth(line) <= width));
@@ -190,8 +193,12 @@ test('new-api works through Pi auth, controller, footer and persistent /usage it
   assert.equal(h.statuses.at(-1), 'Bal $12.34 ');
   await h.commands.get('usage')!.handler('', h.ctx);
   assert.equal(h.entries.length, 1);
-  assert.deepEqual(usageCardComponent(h.entries[0].data).render(80).map(line => line.trimEnd()), [
-    'my-gateway · Account', '', 'Balance   $12.34', '', 'Lifetime  $56.78',
+  assert.deepEqual(usageCardComponent(h.entries[0].data).render(100).map(line => line.trimEnd()), [
+    'my-gateway', '', '  Balance   $12.34', '', '',
+    'Codex', '', '  Unsupported credentials or endpoint', '', '',
+    'Kimi', '', '  Unrecognized quota response', '', '',
+    'OpenCode Go', '', '  Unrecognized quota response', '', '',
+    'DeepSeek', '', '  Unrecognized quota response',
   ]);
 });
 

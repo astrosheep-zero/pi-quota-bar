@@ -38,7 +38,7 @@ export function usageCardComponent(card: UsageCard | undefined, paint?: Paint): 
         return new Text('Usage snapshot unavailable.', 0, 0).render(width);
       }
       // Rebuild on every render for theme/width changes, but freeze time at capture.
-      const lines = usageLines(card, paint, width < 55 ? 10 : 20);
+      const lines = usageLines(card, paint, width < 55 ? 10 : 18);
       // Wrapping, not clipping: long quota names remain readable in narrow terminals.
       return new Text(lines.join('\n'), 0, 0).render(width);
     },
