@@ -87,6 +87,23 @@ test('model select hides unsupported quota immediately; turn end is throttled', 
   assert.equal(h.statuses.at(-1), undefined);
 });
 
+test('an explicit adapter overrides a matching built-in provider', async t => {
+  const adapter: QuotaAdapter = {
+    provider: 'deepseek', label: 'Configured DeepSeek',
+    async query({ now }) {
+      return { fetchedAt: now(), windows: [], balance: { currency: 'CNY', remaining: 88 } };
+    },
+  };
+  const h = harness('tui', [adapter]);
+  t.after(h.cleanup);
+  h.emit('session_start');
+  await tick();
+  await h.commands.get('usage')!.handler('', h.ctx);
+  const text = usageCardComponent(h.entries[0]!.data).render(100).join('\n');
+  assert.ok(text.includes('Configured DeepSeek'), text);
+  assert.ok(text.includes('¥88.00'));
+});
+
 test('noninteractive mode never queries or starts visible status work', async t => {
   const h = harness('print');
   t.after(h.cleanup);
@@ -123,7 +140,7 @@ test('/usage appends durable horizontal-bar items without opening UI or sending 
   assert.deepEqual(usageCardComponent(JSON.parse(original).data).render(80), lines);
 });
 
-test('/usage aggregates every quota provider, not every model provider', async t => {
+test('/usage shows successful quota providers and --all reveals query errors', async t => {
   const adapter: QuotaAdapter = {
     provider: 'my-gateway', label: 'Gateway',
     async query({ now }) {
@@ -149,15 +166,21 @@ test('/usage aggregates every quota provider, not every model provider', async t
   const lines = card.render(100);
   const text = lines.join('\n');
   assert.ok(text.includes('Kimi'));
-  assert.ok(text.includes('DeepSeek'));
   assert.ok(text.includes('Gateway'));
   assert.ok(text.includes('$12.34'));
+  assert.equal(text.includes('DeepSeek'), false);
+  assert.equal(text.includes('Unsupported credentials or endpoint'), false);
   assert.equal(text.includes('codex-for'), false);
   assert.equal(text.includes('unsupported'), false);
   for (const width of [0, 1, 10, 30, 50, 100]) {
     assert.ok(card.render(width).every(line => visibleWidth(line) <= width));
   }
   assert.equal(h.statuses.at(-1), footer); // aggregate view must not hijack the current-provider footer
+  await h.commands.get('usage')!.handler('--all', h.ctx);
+  const diagnostic = usageCardComponent(h.entries[1].data).render(100).join('\n');
+  assert.ok(diagnostic.includes('DeepSeek'));
+  assert.ok(diagnostic.includes('Unsupported credentials or endpoint'));
+  assert.equal(diagnostic.includes('codex-for'), false);
 });
 
 for (const event of ['session_shutdown', 'model_select']) {
@@ -194,15 +217,31 @@ test('new-api works through Pi auth, controller, footer and persistent /usage it
   await h.commands.get('usage')!.handler('', h.ctx);
   assert.equal(h.entries.length, 1);
   assert.deepEqual(usageCardComponent(h.entries[0].data).render(100).map(line => line.trimEnd()), [
-    'my-gateway', '', '  Balance   $12.34', '', '',
-    'Codex', '', '  Unsupported credentials or endpoint', '', '',
-    'Kimi', '', '  Unrecognized quota response', '', '',
-    'OpenCode Go', '', '  Unrecognized quota response', '', '',
-    'DeepSeek', '', '  Unrecognized quota response',
+    'my-gateway  $12.34',
   ]);
 });
 
-test('a failed /usage query appends an honest error snapshot, not fake quota', async t => {
+test('/usage resolves a non-selected provider endpoint from its registered model', async t => {
+  const h = harness('tui', [createNewApiAdapter('micu-ant')]);
+  t.after(h.cleanup);
+  const registry = h.ctx.modelRegistry as unknown as { getAll: () => unknown[] };
+  registry.getAll = () => [h.ctx.model, {
+    provider: 'micu-ant', id: 'claude-test', baseUrl: 'https://gateway.test/v1',
+  }];
+  const urls: string[] = [];
+  h.respondWith(async url => {
+    urls.push(url);
+    return new Response(JSON.stringify(url.endsWith('/subscription')
+      ? { hard_limit_usd: 69.12 } : { total_usage: 5678 }));
+  });
+  h.emit('session_start');
+  await tick();
+  await h.commands.get('usage')!.handler('', h.ctx);
+  assert.ok(urls.includes('https://gateway.test/v1/dashboard/billing/subscription'));
+  assert.ok(usageCardComponent(h.entries[0]!.data).render(100).join('\n').includes('micu-ant'));
+});
+
+test('when all queries fail, /usage is compact and --all shows honest errors', async t => {
   const h = harness();
   t.after(h.cleanup);
   h.emit('session_start');
@@ -213,8 +252,10 @@ test('a failed /usage query appends an honest error snapshot, not fake quota', a
   const entry = h.entries[0].data;
   assert.equal(entry.version, 2);
   if (entry.version !== 2) assert.fail('expected aggregate card');
-  assert.equal(entry.states[0]?.kind, 'error');
-  const text = usageCardComponent(h.entries[0].data).render(80).join('\n');
+  assert.deepEqual(entry.states, []);
+  assert.ok(usageCardComponent(entry).render(80).join('\n').includes('No quota data available'));
+  await h.commands.get('usage')!.handler('--all', h.ctx);
+  const text = usageCardComponent(h.entries[1].data).render(80).join('\n');
   assert.ok(text.includes('Sign in with /login'));
   assert.equal(text.includes('SECRET'), false);
   assert.equal(text.includes('0%'), false);

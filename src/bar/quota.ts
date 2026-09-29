@@ -46,11 +46,9 @@ export function renderFooter(state: QuotaState, paint: Paint = plain, now = Date
   return renderBar([quotaElement(state, now)], paint);
 }
 
-const displayLabel: Record<string, string> = { deepseek: 'DeepSeek' };
-
 export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.now(), barWidth = 16): string[] {
   if (state.kind === 'hidden') return ['No quota adapter for the current provider.'];
-  const title = displayLabel[state.provider] ?? state.label;
+  const title = state.label;
   const indent = (line: string) => line ? `  ${line}` : line;
   if (state.kind === 'loading') return [title, '', indent('Loading…')];
   if (state.kind === 'error') return [title, '', indent(errorText[state.code])];

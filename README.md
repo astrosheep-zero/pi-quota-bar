@@ -1,12 +1,12 @@
 # @astrosheep/pi-quota
 
-Compact quota status for Pi: Codex, Kimi and OpenCode Go work out of the box; new-api, DeepSeek and Sub2API use explicit provider bindings.
+Compact quota status for Pi: Codex, Kimi, OpenCode Go and DeepSeek work out of the box; new-api and Sub2API use explicit provider bindings.
 
 ```bash
 pi install npm:@astrosheep/pi-quota
 ```
 
-Reload Pi after installing or changing settings. Use `/usage` for a persistent, context-free snapshot covering every configured provider with a quota adapter, including the current one. Automatic footer polling never adds chat items.
+Reload Pi after installing or changing settings. Use `/usage` for a persistent, context-free snapshot of providers with available quota data, including the current one. Use `/usage --all` to inspect provider errors. Automatic footer polling never adds chat items.
 
 ## What it shows
 
@@ -18,7 +18,7 @@ Reload Pi after installing or changing settings. Use `/usage` for a persistent, 
 
 A percentage always means **remaining**, not used. Unknown is `[?] ?`; an expired reset is `↺ due` with the stale percentage hidden until the next successful query. A wallet balance never becomes a percentage. Historical spend is not a quota.
 
-The footer shows at most two windows and `+N` for additional ones, for the current provider only. `/usage` queries all configured supported providers and includes all windows, grouped by provider; it does not open a modal or send messages to the model. Snapshots remain frozen at capture time. Errors replace stale values and are shown per provider.
+The footer shows at most two windows and `+N` for additional ones, for the current provider only. `/usage` queries all configured supported providers and shows successful results with all windows, grouped by provider; it does not open a modal or send messages to the model. Snapshots remain frozen at capture time. Query failures replace stale values in the footer and appear in `/usage --all`.
 
 ## Configure providers
 
@@ -36,7 +36,7 @@ Add bindings in global `~/.pi/agent/settings.json` under `quotaUsage` (not proje
 }
 ```
 
-Use the **exact Pi provider ID**. Only selected, explicitly bound providers are queried; built-in `openai-codex`, `kimi-coding` and `opencode-go` cannot be overridden. Unknown keys or adapter options are rejected. The API key and model `baseUrl` come from Pi's active provider auth; do not put model API keys in `quotaUsage`.
+Use the **exact Pi provider ID**. Built-in providers and explicitly bound providers are queried; explicit bindings replace a built-in adapter with the same ID. Unknown keys or adapter options are rejected. The API key comes from Pi's provider auth, and the endpoint comes from the provider's registered model; do not put model API keys in `quotaUsage`.
 
 | Adapter | Endpoint | Result |
 |---|---|---|
@@ -63,7 +63,7 @@ Pi model/auth → adapter → QuotaSnapshot → controller → footer / /usage /
 
 `QuotaSnapshot` separates `balance` (wallet), `allowance` (finite key quota), `windows` (renewable limits), and optional `spend` (Today/Lifetime actual charge). This prevents unrelated amounts from sharing an ambiguous `Used` label. Custom adapters can be passed to `createQuotaExtension({ adapters: [...] })`; see `examples/custom-provider.ts`. Provider aliases are never inferred.
 
-The extension publishes structured state on `quota-bar:state:v1`. Use `createQuotaExtension({ footer: false })` to consume it without this extension's footer. Normal queries are throttled, cancellable, timeout-bounded and backed off after errors. `/usage` forces a fresh query for every configured supported provider. Switching provider discards old footer values immediately.
+The extension publishes structured state on `quota-bar:state:v1`. Use `createQuotaExtension({ footer: false })` to consume it without this extension's footer. Normal queries are throttled, cancellable, timeout-bounded and backed off after errors. `/usage` forces a fresh query for every configured supported provider, then omits failed results from its default view. Switching provider discards old footer values immediately.
 
 ## Development
 

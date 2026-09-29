@@ -24,7 +24,7 @@ export function parseDeepSeekBalance(payload: unknown): AccountBalance {
 
 export function createDeepSeekAdapter(provider: string): QuotaAdapter {
   return {
-    provider, label: provider,
+    provider, label: provider === 'deepseek' ? 'DeepSeek' : provider,
     async query(context) {
       const auth = await officialAuth(context, DEEPSEEK_ORIGIN);
       const payload = await context.getJson(`${DEEPSEEK_ORIGIN}/user/balance`,

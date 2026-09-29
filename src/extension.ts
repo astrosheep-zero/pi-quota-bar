@@ -16,7 +16,8 @@ const STATUS_KEY = 'quota-bar';
 const USAGE_WIDGET = 'quota-bar:usage';
 
 export interface QuotaExtensionOptions {
-  adapters?: readonly QuotaAdapter[]; // Extra adapters; duplicate IDs are rejected.
+  // Explicit adapters replace matching built-ins; duplicate explicit IDs are rejected.
+  adapters?: readonly QuotaAdapter[];
   providers?: readonly string[]; // Extra configured quota providers to include in /usage
   footer?: boolean; // false: query + /usage + structured events only
   intervalMs?: number;
@@ -25,8 +26,13 @@ export interface QuotaExtensionOptions {
 
 export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
   return (pi: ExtensionAPI): void => {
-    const registry = new AdapterRegistry([codexAdapter, kimiAdapter, openCodeGoAdapter,
-      createDeepSeekAdapter('deepseek'), ...(options.adapters ?? [])]);
+    const explicitAdapters = options.adapters ?? [];
+    const explicitProviderIds = new Set(explicitAdapters.map(adapter => adapter.provider));
+    // Settings are deliberate user bindings, so they take precedence over defaults.
+    // AdapterRegistry still detects an ambiguous duplicate among explicit adapters.
+    const registry = new AdapterRegistry([
+      codexAdapter, kimiAdapter, openCodeGoAdapter, createDeepSeekAdapter('deepseek'),
+    ].filter(adapter => !explicitProviderIds.has(adapter.provider)).concat(explicitAdapters));
     let current: ExtensionContext | undefined;
     let selectedProvider: string | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -79,8 +85,11 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
         if (typeof value === 'string') headers[name] = value;
       }
       const auth: ProviderAuth = { ...resolved.auth, headers };
-      // A model-level custom endpoint must not be mistaken for an official account.
-      if (ctx.model?.provider === provider && ctx.model.baseUrl) auth.baseUrl = ctx.model.baseUrl;
+      // Provider auth often has no endpoint. /usage also queries providers other
+      // than the selected model, so resolve their configured model URL as well.
+      const model = ctx.model?.provider === provider ? ctx.model
+        : ctx.modelRegistry.getAll().find(model => model.provider === provider);
+      if (model?.baseUrl) auth.baseUrl = model.baseUrl;
       return auth;
     };
 
@@ -161,8 +170,8 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
     });
 
     pi.registerCommand('usage', {
-      description: 'Query quota for every configured supported provider and add snapshots to the chat history',
-      handler: async (_args, ctx) => {
+      description: 'Show available quotas; use /usage --all to include provider errors',
+      handler: async (args, ctx) => {
         if (!ctx.hasUI) return;
         bind(ctx);
         const generation = ++commandGeneration;
@@ -171,10 +180,21 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
           const getAuth = resolveAuth(ctx);
           const providers = supportedProviders(ctx);
           const states = await Promise.all(providers.map(provider => queryProvider(provider, getAuth)));
+          const ordered = states
+            .map((state, index) => ({ state, index }))
+            .sort((a, b) => {
+              const rank = (state: QuotaState) => state.kind === 'error' ? 3
+                : state.kind === 'ready' && state.snapshot.windows.length > 0 ? 1
+                : 2;
+              return rank(a.state) - rank(b.state) || a.index - b.index;
+            })
+            .map(item => item.state);
           // Never append via a stale Pi runtime, or label a replacement model's data
           // as the result of the original command. A newer command owns its result.
           if (!current || generation !== commandGeneration) return;
-          const card = captureAllUsage(states);
+          const visibleStates = args.trim() === '--all'
+            ? ordered : ordered.filter(state => state.kind === 'ready');
+          const card = captureAllUsage(visibleStates);
           pi.appendEntry<UsageCard>(USAGE_ENTRY, card);
           // Custom entry renderers are TUI-only; RPC clients still get readable output.
           if (ctx.mode !== 'tui') {
