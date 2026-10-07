@@ -30,13 +30,20 @@ export function parseOpenCodeGo(payload: unknown): QuotaWindow[] {
   return windows;
 }
 
-export const openCodeGoAdapter: QuotaAdapter = {
-  provider: 'opencode-go', label: 'OpenCode Go',
-  async query(context) {
-    const auth = await officialAuth(context, 'https://opencode.ai');
-    const data = await context.getJson('https://opencode.ai/zen/go/v1/usage', {
-      Authorization: `Bearer ${bearer(auth)}`,
-    }, context.signal);
-    return { windows: parseOpenCodeGo(data), fetchedAt: context.now() };
-  },
-};
+// A second OpenCode Go account is just another Pi provider ID (configured in
+// models.json with its own apiKey); auth and endpoint stay official regardless.
+export function createOpenCodeGoAdapter(provider: string): QuotaAdapter {
+  return {
+    provider,
+    label: provider === 'opencode-go' ? 'OpenCode Go' : `OpenCode Go (${provider})`,
+    async query(context) {
+      const auth = await officialAuth(context, 'https://opencode.ai');
+      const data = await context.getJson('https://opencode.ai/zen/go/v1/usage', {
+        Authorization: `Bearer ${bearer(auth)}`,
+      }, context.signal);
+      return { windows: parseOpenCodeGo(data), fetchedAt: context.now() };
+    },
+  };
+}
+
+export const openCodeGoAdapter = createOpenCodeGoAdapter('opencode-go');

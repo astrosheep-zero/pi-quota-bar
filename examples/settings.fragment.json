@@ -10,6 +10,11 @@
     },
     "my-sub2api": {
       "adapter": "sub2api"
+    },
+    "yes-vg": {
+      "adapter": "yescode",
+      "username": "you@example.com",
+      "password": "your-account-password"
     }
   }
 }

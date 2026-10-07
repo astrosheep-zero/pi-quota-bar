@@ -6,6 +6,7 @@ type AuthResolver = QueryContext['getAuth'];
 interface ControllerOptions {
   registry: AdapterRegistry;
   getJson: QueryContext['getJson'];
+  postJson: QueryContext['postJson'];
   onState(state: QuotaState): void;
   now?: () => number;
   intervalMs?: number;
@@ -89,7 +90,7 @@ export class QuotaController {
         abort.signal.throwIfAborted();
         const result = await abortable(adapter.query({
           provider: adapter.provider, signal: abort.signal, now: this.now,
-          getAuth, getJson: this.options.getJson,
+          getAuth, getJson: this.options.getJson, postJson: this.options.postJson,
         }), abort.signal);
         if (!active()) return;
         const snapshot = validateSnapshot(result);

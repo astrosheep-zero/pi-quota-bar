@@ -19,7 +19,8 @@ const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 function setup(adapters: QuotaAdapter[], extra: { now?: () => number; timeoutMs?: number } = {}) {
   const states: QuotaState[] = [];
   const controller = new QuotaController({ registry: new AdapterRegistry(adapters),
-    getJson: async () => ({}), onState: state => states.push(state), ...extra });
+    getJson: async () => ({}), postJson: async () => { throw new Error('unexpected POST'); },
+    onState: state => states.push(state), ...extra });
   return { controller, states };
 }
 

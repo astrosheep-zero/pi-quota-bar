@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { codexAccountId, codexAdapter, parseCodex } from '../src/query/codex.ts';
 import { kimiAdapter, parseKimi } from '../src/query/kimi.ts';
-import { openCodeGoAdapter, parseOpenCodeGo } from '../src/query/opencode-go.ts';
+import { createOpenCodeGoAdapter, openCodeGoAdapter, parseOpenCodeGo } from '../src/query/opencode-go.ts';
 import { createJsonClient } from '../src/query/http.ts';
 import { AdapterRegistry, validateSnapshot } from '../src/query/registry.ts';
 import { QuotaError } from '../src/query/types.ts';
@@ -29,6 +29,7 @@ const openCodeGoPayload = { usage: {
 const context = (overrides: Partial<QueryContext> = {}): QueryContext => ({
   provider: 'kimi-coding', signal: new AbortController().signal, now: () => now,
   getAuth: async () => ({ apiKey: 'secret' }), getJson: async () => kimiPayload,
+  postJson: async () => { throw new Error('unexpected POST'); },
   ...overrides,
 });
 
@@ -121,6 +122,25 @@ test('OpenCode Go uses the official usage endpoint and rejects other origins', a
     await assert.rejects(openCodeGoAdapter.query(context({ provider: 'opencode-go',
       getAuth: async () => auth, getJson })), QuotaError);
   }
+});
+
+test('OpenCode Go factory binds extra accounts to their own provider ID', async () => {
+  const adapter = createOpenCodeGoAdapter('opencode-go-2');
+  assert.equal(adapter.provider, 'opencode-go-2');
+  assert.equal(adapter.label, 'OpenCode Go (opencode-go-2)');
+  assert.equal(openCodeGoAdapter.label, 'OpenCode Go'); // built-in keeps the short label
+  const result = await adapter.query(context({ provider: 'opencode-go-2',
+    getAuth: async provider => {
+      assert.equal(provider, 'opencode-go-2');
+      return { apiKey: 'oc-second' };
+    },
+    getJson: async (url, headers) => {
+      assert.equal(url, 'https://opencode.ai/zen/go/v1/usage');
+      assert.equal(headers.Authorization, 'Bearer oc-second');
+      return openCodeGoPayload;
+    },
+  }));
+  assert.deepEqual(result.windows.map(w => w.label), ['5h', '1w', '30d']);
 });
 
 test('Codex account is derived from the same runtime token, not another auth file', async () => {

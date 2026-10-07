@@ -42,12 +42,18 @@ export interface ProviderAuth {
   baseUrl?: string;
 }
 
+export interface PostJsonResult {
+  body: unknown;
+  setCookie: string[];
+}
+
 export interface QueryContext {
   provider: string;
   signal: AbortSignal;
   now(): number;
   getAuth(provider: string): Promise<ProviderAuth | undefined>;
   getJson(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<unknown>;
+  postJson(url: string, body: unknown, headers: Record<string, string>, signal: AbortSignal): Promise<PostJsonResult>;
 }
 
 export interface QuotaAdapter {

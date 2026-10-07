@@ -52,6 +52,60 @@ export function createJsonClient(fetcher: typeof fetch = globalThis.fetch): Quer
   };
 }
 
+export function createPostJsonClient(fetcher: typeof fetch = globalThis.fetch): QueryContext['postJson'] {
+  return async (url, body, headers, signal) => {
+    try {
+      const response = await fetcher(url, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+        signal, redirect: 'error', // Never forward credentials to a redirected endpoint.
+      });
+      if (!response.ok) {
+        const retry = response.headers.get('retry-after');
+        const seconds = retry && /^\d+(\.\d+)?$/.test(retry) ? Number(retry) : NaN;
+        const delay = Number.isFinite(seconds) ? seconds * 1000
+          : retry ? Date.parse(retry) - Date.now() : NaN;
+        await response.body?.cancel();
+        if (response.status === 401 || response.status === 403) throw new QuotaError('auth');
+        if (response.status === 429) {
+          throw new QuotaError('rate-limit', Number.isFinite(delay) ? Math.max(0, delay) : undefined);
+        }
+        throw new QuotaError('http');
+      }
+      const setCookie = typeof response.headers.getSetCookie === 'function'
+        ? response.headers.getSetCookie() : [];
+      const reader = response.body?.getReader();
+      if (!reader) throw new QuotaError('schema');
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          size += part.value.length;
+          if (size > 256 * 1024) {
+            await reader.cancel();
+            throw new QuotaError('schema');
+          }
+          chunks.push(part.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      try {
+        return { body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown, setCookie };
+      } catch {
+        throw new QuotaError('schema');
+      }
+    } catch (error) {
+      if (error instanceof QuotaError) throw error;
+      if (signal.aborted) throw signal.reason;
+      throw new QuotaError('network');
+    }
+  };
+}
+
 export function header(auth: ProviderAuth, name: string): string | undefined {
   return Object.entries(auth.headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
 }

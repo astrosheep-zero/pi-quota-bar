@@ -7,13 +7,16 @@ import { createDeepSeekAdapter } from './query/deepseek.ts';
 import { kimiAdapter } from './query/kimi.ts';
 import { openCodeGoAdapter } from './query/opencode-go.ts';
 import { QuotaController } from './query/controller.ts';
-import { createJsonClient } from './query/http.ts';
+import { createJsonClient, createPostJsonClient } from './query/http.ts';
 import { AdapterRegistry } from './query/registry.ts';
 import type { ProviderAuth, QuotaAdapter, QuotaState } from './query/types.ts';
 
 export const STATUS_EVENT = 'quota-bar:state:v1';
 const STATUS_KEY = 'quota-bar';
 const USAGE_WIDGET = 'quota-bar:usage';
+const REFRESHING_TEXT = 'Refreshing…';
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+export const SPINNER_INTERVAL_MS = 80;
 
 export interface QuotaExtensionOptions {
   // Explicit adapters replace matching built-ins; duplicate explicit IDs are rejected.
@@ -39,6 +42,8 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
     let lastStatus: string | undefined;
     // Invalidates pending commands on model/session replacement or another /usage.
     let commandGeneration = 0;
+    // Tracks whether /usage has already produced a snapshot in this runtime.
+    let hasUsageSnapshot = false;
 
     pi.registerEntryRenderer<UsageCard>(USAGE_ENTRY, (entry, _options, theme) => {
       const paint = process.env.NO_COLOR !== undefined ? undefined
@@ -68,9 +73,10 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
     };
 
     const getJson = createJsonClient();
+    const postJson = createPostJsonClient();
 
     const controller = new QuotaController({
-      registry, getJson, intervalMs: options.intervalMs, timeoutMs: options.timeoutMs,
+      registry, getJson, postJson, intervalMs: options.intervalMs, timeoutMs: options.timeoutMs,
       onState(state) {
         paintFooter();
         pi.events.emit(STATUS_EVENT, state); // Structured data, no credentials or ANSI.
@@ -123,7 +129,7 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
         return controller.state;
       }
       const scratch = new QuotaController({
-        registry, getJson, intervalMs: options.intervalMs, timeoutMs: options.timeoutMs,
+        registry, getJson, postJson, intervalMs: options.intervalMs, timeoutMs: options.timeoutMs,
         onState() {},
       });
       scratch.select(provider);
@@ -175,7 +181,35 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
         if (!ctx.hasUI) return;
         bind(ctx);
         const generation = ++commandGeneration;
-        if (ctx.mode === 'tui') ctx.ui.setWidget(USAGE_WIDGET, ['Quota …']);
+        let spinner: ReturnType<typeof setInterval> | undefined;
+        if (ctx.mode === 'tui') {
+          // Previous snapshots are already rendered in the transcript. Only add the
+          // spinner here, otherwise refreshing duplicates the last grid in a widget.
+          const label = hasUsageSnapshot ? REFRESHING_TEXT : 'Fetching quota…';
+          let frame = 0;
+          const paintSpinner = () => {
+            if (!current || generation !== commandGeneration) return false;
+            const spinnerLine = `${SPINNER_FRAMES[frame]} ${label}`;
+            ctx.ui.setWidget(USAGE_WIDGET, (_tui, theme) => {
+              const paint = process.env.NO_COLOR !== undefined ? undefined
+                : (tone: Parameters<typeof theme.fg>[0], text: string) => theme.fg(tone, text);
+              return {
+                render(width: number): string[] {
+                  if (width < spinnerLine.length) return [];
+                  return [paint ? paint('dim', spinnerLine) : spinnerLine];
+                },
+                invalidate() {},
+              };
+            });
+            return true;
+          };
+          paintSpinner();
+          spinner = setInterval(() => {
+            frame = (frame + 1) % SPINNER_FRAMES.length;
+            if (!paintSpinner() && spinner) { clearInterval(spinner); spinner = undefined; }
+          }, SPINNER_INTERVAL_MS);
+          spinner.unref?.();
+        }
         try {
           const getAuth = resolveAuth(ctx);
           const providers = supportedProviders(ctx);
@@ -195,12 +229,14 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
           const visibleStates = args.trim() === '--all'
             ? ordered : ordered.filter(state => state.kind === 'ready');
           const card = captureAllUsage(visibleStates);
+          hasUsageSnapshot = true;
           pi.appendEntry<UsageCard>(USAGE_ENTRY, card);
           // Custom entry renderers are TUI-only; RPC clients still get readable output.
           if (ctx.mode !== 'tui') {
             ctx.ui.notify(usageLines(card, undefined).join('\n'), 'info');
           }
         } finally {
+          if (spinner) { clearInterval(spinner); spinner = undefined; }
           // An older request must not clear a newer command's loading indicator.
           if (current && generation === commandGeneration && ctx.mode === 'tui') {
             ctx.ui.setWidget(USAGE_WIDGET, undefined);

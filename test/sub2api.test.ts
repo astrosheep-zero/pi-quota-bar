@@ -12,7 +12,7 @@ const wallet = { mode: 'unrestricted', isValid: true, unit: 'USD', planName: 'é’
 const context = (overrides: Partial<QueryContext> = {}): QueryContext => ({
   provider: 'gateway', signal: new AbortController().signal, now: () => now,
   getAuth: async () => ({ apiKey: 'SECRET', baseUrl: 'https://host.test/gateway/v1' }),
-  getJson: async () => wallet, ...overrides,
+  getJson: async () => wallet, postJson: async () => { throw new Error('unexpected POST'); }, ...overrides,
 });
 
 function state(payload: unknown): QuotaState {

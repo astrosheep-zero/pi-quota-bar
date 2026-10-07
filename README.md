@@ -1,6 +1,6 @@
 # @astrosheep/pi-quota
 
-Compact quota status for Pi: Codex, Kimi, OpenCode Go and DeepSeek work out of the box; new-api and Sub2API use explicit provider bindings.
+Compact quota status for Pi: Codex, Kimi, OpenCode Go and DeepSeek work out of the box; new-api, Sub2API and YesCode use explicit provider bindings.
 
 ```bash
 pi install npm:@astrosheep/pi-quota
@@ -30,7 +30,9 @@ Add bindings in global `~/.pi/agent/settings.json` under `quotaUsage` (not proje
     "providers": {
       "my-sub2api": { "adapter": "sub2api" },
       "my-new-api": { "adapter": "new-api", "quotaPerUnit": 500000, "currency": "USD" },
-      "deepseek": { "adapter": "deepseek" }
+      "deepseek": { "adapter": "deepseek" },
+      "opencode-go-2": { "adapter": "opencode-go" },
+      "yes-vg": { "adapter": "yescode", "username": "you@example.com", "password": "..." }
     }
   }
 }
@@ -43,10 +45,16 @@ Use the **exact Pi provider ID**. Built-in providers and explicitly bound provid
 | `sub2api` | `{baseUrl}/usage` | Wallet, key quota, rate windows or subscription day/week/month windows; API-key Today/Lifetime actual spend |
 | `new-api` | Account PAT `/api/user/self`, falling back to key-native billing/token endpoints | Account balance + lifetime spend; finite key quota when explicitly granted; **not** a renewable window |
 | `deepseek` | Official `/user/balance` | Balance only; no invented spend |
+| `opencode-go` | Official `https://opencode.ai/zen/go/v1/usage` | 5h/1w/30d windows, same as the built-in `opencode-go` adapter |
+| `yescode` | `co.yes.vg` login → session → `/api/v1/auth/profile` + `/api/v1/user/balance` | Wallet (subscription + pay-as-you-go) plus daily/weekly subscription windows |
+
+Bind `opencode-go` to a second OpenCode Go account: register it as its own Pi provider in `models.json` with its own `apiKey` (e.g. `opencode-go-2`), then bind that ID here. The built-in `opencode-go` binding is implicit and needs no entry; the reserved IDs `openai-codex`, `kimi-coding` and `opencode-go` cannot be rebound.
 
 Sub2API accepts no extra settings; it preserves deployment subpaths. Rate-only keys need not expose a top-level currency (rates are USD). Unknown rate-window durations and invalid limits fail rather than inventing a 1d window. Subscription periods without a cap are omitted. Its dashboard `/api/v1/usage` is a separate, JWT-authenticated paginated request log; the adapter uses the API-key `/v1/usage` instead.
 
 For new-api, `quotaPerUnit` defaults to `500000`, `currency` to `USD`. Optionally add `dashboardAccessToken` (console system access token) and `dashboardUserId` (positive numeric ID required by some old forks) to that provider. This PAT is the **only** optional secret kept in settings. The account endpoint takes precedence; failures fall back to the key-native billing and token usage paths. Without a PAT, an API key cannot read the dashboard account quota. A finite key reports a quota bar only when `total_granted` is present and consistent with used plus remaining; otherwise it shows a balance and lifetime spend, without inventing a limit. Values in settings and server error bodies are never logged.
+
+For YesCode, `username` is the account email and `password` the account password; both stay in global `settings.json`, which is the trade-off of this adapter. YesCode rejects API keys on account endpoints ("requires a user session or JWT"), so the adapter logs in via `/api/v1/auth/login`, caches the issued cookie/JWT in memory for ~23 hours, and re-logs in once on an auth failure. The model `cr_` key is never sent to account endpoints; it only pins the provider to the official `co.yes.vg` origin. Balances are summed from subscription and pay-as-you-go; daily/weekly windows appear only when the account actually has those caps.
 
 Authenticated quota URLs must use HTTPS, except HTTP loopback for local deployments. URL userinfo, query strings, fragments and HTTP redirects are rejected; credentials never follow redirects. Fixed official endpoints reject custom origins. No browser cookie scraping or credential discovery.
 

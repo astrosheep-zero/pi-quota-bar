@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { createQuotaExtension } from '../src/extension.ts';
+import { createQuotaExtension, SPINNER_INTERVAL_MS } from '../src/extension.ts';
 import { USAGE_ENTRY, usageCardComponent } from '../src/bar/card.ts';
 import type { UsageCard } from '../src/bar/card.ts';
 import { createNewApiAdapter } from '../src/query/new-api.ts';
@@ -17,6 +17,7 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
   const emitted: unknown[] = [];
   const entries: { type: string; data: UsageCard }[] = [];
   const renderers = new Map<string, unknown>();
+  const widgets: unknown[] = [];
   let requests = 0;
   let lastUrl = '';
   const originalFetch = globalThis.fetch;
@@ -37,7 +38,7 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
     theme: { fg: (_tone: string, text: string) => text },
     setStatus: (_key: string, text: string | undefined) => statuses.push(text),
     notify: () => {},
-    setWidget: () => {},
+    setWidget: (_key: string, content: unknown) => { widgets.push(content); },
     custom: async (): Promise<void> => { assert.fail('No modal or input replacement allowed'); },
   };
   const ctx = {
@@ -49,7 +50,7 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
   } as unknown as ExtensionContext;
   createQuotaExtension({ adapters })(pi);
   return {
-    ctx, ui, statuses, commands, emitted, entries, renderers,
+    ctx, ui, statuses, commands, emitted, entries, renderers, widgets,
     requests: () => requests,
     lastUrl: () => lastUrl,
     respondWith: (responder: (url: string) => Promise<Response>) => { respond = responder; },
@@ -259,4 +260,54 @@ test('when all queries fail, /usage is compact and --all shows honest errors', a
   assert.ok(text.includes('Sign in with /login'));
   assert.equal(text.includes('SECRET'), false);
   assert.equal(text.includes('0%'), false);
+});
+
+test('/usage spinner never duplicates the previous transcript card during refresh', async t => {
+  const h = harness();
+  t.after(h.cleanup);
+  h.emit('session_start');
+  await tick();
+  await tick();
+  await h.commands.get('usage')!.handler('', h.ctx);
+  assert.equal(h.entries.length, 1);
+  const originalEntry = JSON.stringify(h.entries[0]);
+  const renderWidget = (factory: unknown, width = 100): string[] => {
+    assert.equal(typeof factory, 'function');
+    return (factory as (tui: unknown, theme: { fg: (tone: string, text: string) => string }) => { render: (width: number) => string[] })({}, { fg: (_tone, text) => text }).render(width);
+  };
+  const firstLines = renderWidget(h.widgets[1]);
+  assert.equal(firstLines.length, 1);
+  assert.ok(firstLines.at(-1)!.includes('Fetching quota…'));
+  assert.ok(/^\p{Other_Symbol}|^\S/u.test(firstLines.at(-1)!));
+  assert.equal(firstLines.some(line => line.includes('Kimi')), false, 'first run has no previous grid');
+
+  let resolve!: (response: Response) => void;
+  h.respondWith(async url => url.startsWith('https://api.kimi.com/')
+    ? new Promise<Response>(yes => { resolve = yes; })
+    : new Response('', { status: 401 }));
+  const pending = h.commands.get('usage')!.handler('', h.ctx);
+  await tick();
+  const lines = renderWidget(h.widgets.at(-1));
+  assert.equal(lines.length, 1, 'loading widget contains only the spinner');
+  assert.ok(lines[0].includes('Refreshing…'));
+  assert.deepEqual(renderWidget(h.widgets.at(-1), 0), []);
+  assert.equal(h.entries.length, 1, 'no new snapshot until the query completes');
+  assert.equal(JSON.stringify(h.entries[0]), originalEntry, 'previous snapshot remains intact');
+  const screen = [...usageCardComponent(h.entries[0].data).render(100), ...lines];
+  assert.equal(screen.filter(line => line.includes('Kimi')).length, 1, 'previous grid is displayed only once');
+  assert.ok(lines.every(line => visibleWidth(line) <= 100));
+
+  await new Promise(done => setTimeout(done, SPINNER_INTERVAL_MS * 2 + 40));
+  const animated = renderWidget(h.widgets.at(-1));
+  assert.notEqual(animated.at(-1), lines.at(-1), 'spinner frame advances while waiting');
+
+  resolve(new Response(JSON.stringify({
+    usage: { limit: 100, used: 15, resetTime: '2099-01-01T00:00:00Z' },
+    limits: [{ window: { duration: 5, timeUnit: 'TIME_UNIT_HOUR' }, detail: { limit: 100, used: 28 } }],
+  })));
+  await pending;
+  await tick();
+  assert.equal(h.entries.length, 2);
+  assert.ok(usageCardComponent(h.entries[1].data).render(100).some(line => line.includes('Kimi')));
+  assert.equal(h.widgets.at(-1), undefined); // widget cleared after the refresh lands
 });

@@ -16,7 +16,7 @@ const keyAllowance = { currency: 'USD', limit: 69.12, used: 56.78, remaining: 12
 const context = (overrides: Partial<QueryContext> = {}): QueryContext => ({
   provider: 'my-gateway', signal: new AbortController().signal, now: () => 100000,
   getAuth: async () => ({ apiKey: 'GATEWAY-SECRET', baseUrl: 'https://gateway.test/v1' }),
-  getJson: async () => payload, ...overrides,
+  getJson: async () => payload, postJson: async () => { throw new Error('unexpected POST'); }, ...overrides,
 });
 
 test('new-api finite key uses its explicit granted/used/remaining, not a periodic window', () => {
@@ -231,19 +231,21 @@ test('key allowance shows a finite bar, while account spend never appears in the
 test('config binds explicit provider IDs and validates optional unit/currency settings', () => {
   const config = parseQuotaConfig({ providers: {
     micucode: { adapter: 'new-api' }, other: { adapter: 'new-api', quotaPerUnit: 1000, currency: 'CNY' },
-    deepseek: { adapter: 'deepseek' }, sub2: { adapter: 'sub2api' },
+    deepseek: { adapter: 'deepseek' }, sub2: { adapter: 'sub2api' }, oc2: { adapter: 'opencode-go' },
   } });
   assert.deepEqual(config.providers.micucode, { adapter: 'new-api', quotaPerUnit: 500000, currency: 'USD' });
   assert.equal(config.providers.other.adapter, 'new-api');
   if (config.providers.other.adapter === 'new-api') assert.equal(config.providers.other.quotaPerUnit, 1000);
   assert.equal(config.providers.deepseek.adapter, 'deepseek');
   assert.equal(config.providers.sub2.adapter, 'sub2api');
+  assert.equal(config.providers.oc2.adapter, 'opencode-go');
   for (const value of [null, {}, { providers: [] }, { providers: {}, apiKey: 'SECRET' },
     ...[{ adapter: 'billing' }, { adapter: 'new-api', quotaPerUnit: 0 },
       { adapter: 'new-api', quotaPerUnit: null }, { adapter: 'new-api', quotaPerUnit: '500000' },
       { adapter: 'new-api', currency: 'usd' }, { adapter: 'new-api', apiKey: 'SECRET' },
       { adapter: 'deepseek', quotaPerUnit: 500000 }, { adapter: 'deepseek', currency: 'CNY' },
-      { adapter: 'sub2api', currency: 'USD' }]
+      { adapter: 'sub2api', currency: 'USD' }, { adapter: 'opencode-go', currency: 'USD' },
+      { adapter: 'opencode-go', quotaPerUnit: 500000 }]
       .map(item => ({ providers: { gateway: item } })),
     { providers: { 'openai-codex': { adapter: 'new-api' } } },
     { providers: { 'kimi-coding': { adapter: 'new-api' } } },

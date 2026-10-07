@@ -103,3 +103,29 @@ test('footer bounds window count, details retain model-specific windows', () => 
   assert.ok(renderFooter(extra, undefined, now).endsWith(' +1 '));
   assert.ok(renderUsage(extra, undefined, now).some(line => line.startsWith('  GPT-X/5h ')));
 });
+
+test('aggregate grid aligns bars, balance amounts and reset arrows across mixed rows', async () => {
+  const { aggregateUsageLines } = await import('../src/bar/card.ts');
+  const window = (id: string, label: string, pct: number) => ({ ...state.snapshot.windows[0], id, label, remainingPercent: pct });
+  const states: Exclude<QuotaState, { kind: 'loading' }>[] = [
+    { kind: 'ready', provider: 'kimi', label: 'Kimi', snapshot: { fetchedAt: now, windows: [window('5h', '5h', 100), window('1w', '1w', 97)] } },
+    { kind: 'ready', provider: 'opencode-go', label: 'OpenCode Go', snapshot: { fetchedAt: now, windows: [window('5h', '5h', 100), window('30d', '30d', 14)] } },
+    { kind: 'ready', provider: 'micu-ant', label: 'micu-ant', snapshot: { fetchedAt: now, windows: [], balance: { remaining: 41.12, currency: 'USD' } } },
+    { kind: 'ready', provider: 'ikun', label: 'ikun', snapshot: { fetchedAt: now, windows: [], balance: { remaining: 17.16, currency: 'CNY' } } },
+    { kind: 'ready', provider: 'cctq', label: 'cctq', snapshot: { fetchedAt: now, windows: [], balance: { remaining: 0, currency: 'USD', unlimited: true } } },
+    { kind: 'ready', provider: 'codex-for', label: 'codex-for', snapshot: { fetchedAt: now, windows: [],
+      balance: { remaining: 953.52, currency: 'USD' }, spend: { today: 64.89, currency: 'USD' } } },
+  ];
+  const lines = aggregateUsageLines(states, undefined, now);
+  for (const [marker, subset] of [
+    ['[', lines.filter(line => line.includes('['))],
+    ['↺', lines.filter(line => line.includes('↺'))],
+  ] as const) {
+    const columns = subset.map(line => visibleWidth(line.slice(0, line.indexOf(marker))));
+    assert.equal(new Set(columns).size, 1, `${marker} column must align`);
+  }
+  const moneyLines = lines.filter(line => /[$¥]/.test(line));
+  const moneyColumns = moneyLines.map(line => visibleWidth(line.slice(0, line.search(/[$¥]/))));
+  assert.equal(new Set(moneyColumns).size, 1, 'balance amounts must share one column');
+  assert.ok(lines.some(line => line.includes('today $64.89')));
+});

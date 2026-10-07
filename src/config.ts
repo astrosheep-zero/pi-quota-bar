@@ -1,12 +1,16 @@
 import { createDeepSeekAdapter } from './query/deepseek.ts';
 import { createNewApiAdapter, validateNewApiOptions } from './query/new-api.ts';
+import { createOpenCodeGoAdapter } from './query/opencode-go.ts';
 import { createSub2ApiAdapter } from './query/sub2api.ts';
+import { createYesCodeAdapter, validateYesCodeOptions } from './query/yescode.ts';
 import type { NewApiOptions } from './query/new-api.ts';
+import type { YesCodeOptions } from './query/yescode.ts';
 import type { QuotaAdapter } from './query/types.ts';
 
 export type ProviderQuotaConfig =
   | ({ adapter: 'new-api'; quotaPerUnit: number; currency: string } & Pick<NewApiOptions, 'dashboardAccessToken' | 'dashboardUserId'>)
-  | { adapter: 'deepseek' | 'sub2api' };
+  | ({ adapter: 'yescode' } & YesCodeOptions)
+  | { adapter: 'deepseek' | 'sub2api' | 'opencode-go' };
 export interface QuotaConfig { providers: Record<string, ProviderQuotaConfig> }
 
 const DASHBOARD_KEYS = ['dashboardAccessToken', 'dashboardUserId'] as const;
@@ -28,7 +32,7 @@ function parseDashboardOptions(item: Record<string, unknown>): Pick<NewApiOption
 export class QuotaConfigError extends Error {
   constructor() {
     // Settings may accidentally contain secrets. Never echo content/values.
-    super('Invalid settings.json quotaUsage. Use providers with adapter "new-api", "deepseek" or "sub2api".');
+    super('Invalid settings.json quotaUsage. Use providers with adapter "new-api", "deepseek", "sub2api", "opencode-go" or "yescode".');
   }
 }
 
@@ -49,9 +53,18 @@ export function parseQuotaConfig(value: unknown): QuotaConfig {
       providers[provider] = { adapter: 'deepseek' };
       continue;
     }
-    if (item.adapter === 'sub2api') {
+    if (item.adapter === 'sub2api' || item.adapter === 'opencode-go') {
       if (Object.keys(item).length !== 1) throw new QuotaConfigError();
-      providers[provider] = { adapter: 'sub2api' };
+      providers[provider] = { adapter: item.adapter };
+      continue;
+    }
+    if (item.adapter === 'yescode') {
+      if (Object.keys(item).some(key => !['adapter', 'username', 'password'].includes(key))
+        || typeof item.username !== 'string' || typeof item.password !== 'string') throw new QuotaConfigError();
+      try {
+        providers[provider] = { adapter: 'yescode',
+          ...validateYesCodeOptions({ username: item.username, password: item.password }) };
+      } catch { throw new QuotaConfigError(); }
       continue;
     }
     if (item.adapter !== 'new-api'
@@ -73,6 +86,8 @@ export function loadQuotaAdaptersFromSettings(settings: unknown): QuotaAdapter[]
     switch (options.adapter) {
       case 'deepseek': return createDeepSeekAdapter(provider);
       case 'sub2api': return createSub2ApiAdapter(provider);
+      case 'opencode-go': return createOpenCodeGoAdapter(provider);
+      case 'yescode': return createYesCodeAdapter(provider, options);
       case 'new-api': return createNewApiAdapter(provider, options);
     }
   });

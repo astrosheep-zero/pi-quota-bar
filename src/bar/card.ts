@@ -65,7 +65,7 @@ function gridRows(states: readonly Exclude<QuotaState, { kind: 'loading' }>[], n
             group, kind: 'quota',
             provider: index === 0 ? state.label : '',
             metric: `${window.scope ? `${window.scope}/` : ''}${window.label}`,
-            value: `${horizontalBar(remaining, barWidth)} ${formatPercent(remaining)}`,
+            value: `${horizontalBar(remaining, barWidth)} ${padStartVisible(formatPercent(remaining), 4)}`,
             secondary: `↺ ${window.resetAt === null ? '?' : duration(window.resetAt - now)}`,
             valueTone: remainingTone(remaining), metricTone: 'dim', secondaryTone: 'dim',
           });
@@ -125,7 +125,7 @@ export function aggregateUsageLines(
     previousGroup = row.group;
     const provider = padEndVisible(row.provider, providerWidth);
     const metric = row.kind === 'quota' ? padEndVisible(row.metric, metricWidth) : '';
-    const value = padStartVisible(row.value, row.kind === 'quota' ? quotaValueWidth : otherValueWidth);
+    const value = padEndVisible(row.value, row.kind === 'quota' ? quotaValueWidth : otherValueWidth);
     const line = paint('text', provider)
       + (metric ? paint(row.metricTone, `  ${metric}`) : '')
       + paint(row.valueTone, `  ${value}`)
