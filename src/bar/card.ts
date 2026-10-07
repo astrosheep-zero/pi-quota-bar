@@ -10,7 +10,8 @@ export const USAGE_ENTRY = 'quota-bar:usage:v1';
 
 export type UsageCard =
   | { version: 1; capturedAt: number; state: Exclude<QuotaState, { kind: 'loading' }> }
-  | { version: 2; capturedAt: number; states: Exclude<QuotaState, { kind: 'loading' }>[] };
+  // currentProvider is optional so cards saved before the marker existed still render.
+  | { version: 2; capturedAt: number; states: Exclude<QuotaState, { kind: 'loading' }>[]; currentProvider?: string };
 
 export function captureUsage(state: QuotaState, now = Date.now()): UsageCard | undefined {
   if (state.kind === 'loading') return undefined;
@@ -18,8 +19,8 @@ export function captureUsage(state: QuotaState, now = Date.now()): UsageCard | u
   return { version: 1, capturedAt: now, state: structuredClone(state) };
 }
 
-export function captureAllUsage(states: readonly QuotaState[], now = Date.now()): UsageCard {
-  return { version: 2, capturedAt: now, states: structuredClone(states.filter(
+export function captureAllUsage(states: readonly QuotaState[], now = Date.now(), currentProvider?: string): UsageCard {
+  return { version: 2, capturedAt: now, currentProvider, states: structuredClone(states.filter(
     (state): state is Exclude<QuotaState, { kind: 'loading' }> => state.kind !== 'loading',
   )) };
 }
@@ -52,9 +53,13 @@ function padStartVisible(text: string, width: number): string {
   return ' '.repeat(Math.max(0, width - visibleWidth(text))) + text;
 }
 
-function gridRows(states: readonly Exclude<QuotaState, { kind: 'loading' }>[], now: number, barWidth: number): UsageRow[] {
+function gridRows(states: readonly Exclude<QuotaState, { kind: 'loading' }>[], now: number, barWidth: number, currentProvider?: string): UsageRow[] {
   const rows: UsageRow[] = [];
   states.forEach((state, group) => {
+    // The session's own provider is marked so it stays findable in long lists.
+    // (Only ready/error states carry provider and label; hidden rows never render.)
+    const mark = (entry: { provider: string; label: string }) =>
+      currentProvider !== undefined && entry.provider === currentProvider ? `★ ${entry.label}` : entry.label;
     if (state.kind === 'ready') {
       const windows = state.snapshot.windows;
       if (windows.length > 0) {
@@ -63,7 +68,7 @@ function gridRows(states: readonly Exclude<QuotaState, { kind: 'loading' }>[], n
           const remaining = expired ? null : window.remainingPercent;
           rows.push({
             group, kind: 'quota',
-            provider: index === 0 ? state.label : '',
+            provider: index === 0 ? mark(state) : '',
             metric: `${window.scope ? `${window.scope}/` : ''}${window.label}`,
             value: `${horizontalBar(remaining, barWidth)} ${padStartVisible(formatPercent(remaining), 4)}`,
             secondary: `↺ ${window.resetAt === null ? '?' : duration(window.resetAt - now)}`,
@@ -75,7 +80,7 @@ function gridRows(states: readonly Exclude<QuotaState, { kind: 'loading' }>[], n
       if (state.snapshot.balance) {
         const balance = state.snapshot.balance;
         rows.push({
-          group, kind: 'balance', provider: state.label, metric: '',
+          group, kind: 'balance', provider: mark(state), metric: '',
           value: remainingMoney(balance),
           secondary: state.snapshot.spend?.today !== undefined
             ? `today ${money(state.snapshot.spend.today, state.snapshot.spend.currency)}` : '',
@@ -88,7 +93,7 @@ function gridRows(states: readonly Exclude<QuotaState, { kind: 'loading' }>[], n
         const allowance = state.snapshot.allowance;
         const remaining = Math.max(0, Math.min(100, allowance.remaining / allowance.limit * 100));
         rows.push({
-          group, kind: 'balance', provider: state.label, metric: '',
+          group, kind: 'balance', provider: mark(state), metric: '',
           value: `${horizontalBar(remaining, barWidth)} ${formatPercent(remaining)}`,
           secondary: `${money(allowance.used, allowance.currency)} used`,
           valueTone: remainingTone(remaining), metricTone: 'dim', secondaryTone: 'dim',
@@ -97,7 +102,7 @@ function gridRows(states: readonly Exclude<QuotaState, { kind: 'loading' }>[], n
       }
     }
     if (state.kind === 'error') {
-      rows.push({ group, kind: 'error', provider: state.label, metric: '', value: errorText[state.code], secondary: '',
+      rows.push({ group, kind: 'error', provider: mark(state), metric: '', value: errorText[state.code], secondary: '',
         valueTone: 'warning', metricTone: 'dim', secondaryTone: 'dim' });
     }
   });
@@ -109,8 +114,9 @@ export function aggregateUsageLines(
   paint: Paint = (_tone, text) => text,
   now = Date.now(),
   barWidth = 12,
+  currentProvider?: string,
 ): string[] {
-  const rows = gridRows(states, now, barWidth);
+  const rows = gridRows(states, now, barWidth, currentProvider);
   if (rows.length === 0) return ['No quota data available. Run /usage --all for details.'];
   const quotaRows = rows.filter(row => row.kind === 'quota');
   const otherRows = rows.filter(row => row.kind !== 'quota');
@@ -137,7 +143,46 @@ export function aggregateUsageLines(
 
 export function usageLines(card: UsageCard, paint?: Paint, barWidth = 12): string[] {
   if (card.version === 1) return renderUsage(card.state, paint, card.capturedAt, barWidth);
-  return aggregateUsageLines(card.states, paint, card.capturedAt, barWidth);
+  return aggregateUsageLines(card.states, paint, card.capturedAt, barWidth, card.currentProvider);
+}
+
+// Narrow-client layout (RPC notify bubbles, phones): provider name on its own
+// header line, windows indented below. No wide grid columns, so monospace code
+// blocks never wrap. Paseo's fence blocks have no horizontal scroll: RN Text
+// wraps long lines and a wrapped grid is worse than no grid.
+export function aggregateCompactLines(
+  states: readonly Exclude<QuotaState, { kind: 'loading' }>[],
+  paint: Paint = (_tone, text) => text,
+  now = Date.now(),
+  barWidth = 6,
+  currentProvider?: string,
+): string[] {
+  const rows = gridRows(states, now, barWidth, currentProvider);
+  if (rows.length === 0) return ['No quota data available. Run /usage --all for details.'];
+  const metricWidth = Math.max(0, ...rows.filter(row => row.kind === 'quota').map(row => visibleWidth(row.metric)));
+  const lines: string[] = [];
+  let previousGroup: number | undefined;
+  for (const row of rows) {
+    if (previousGroup !== undefined && row.group !== previousGroup) lines.push('');
+    previousGroup = row.group;
+    if (row.kind === 'quota') {
+      if (row.provider) lines.push(paint('text', row.provider));
+      const metric = padEndVisible(row.metric, metricWidth);
+      const line = `  ${paint(row.metricTone, metric)}  ${paint(row.valueTone, row.value)}`
+        + (row.secondary ? `  ${paint(row.secondaryTone, row.secondary)}` : '');
+      lines.push(line.replace(/\s+$/u, ''));
+    } else {
+      const line = paint('text', row.provider) + `  ${paint(row.valueTone, row.value)}`
+        + (row.secondary ? `  ${paint(row.secondaryTone, row.secondary)}` : '');
+      lines.push(line.replace(/\s+$/u, ''));
+    }
+  }
+  return lines;
+}
+
+export function compactUsageLines(card: UsageCard, paint?: Paint, barWidth = 6): string[] {
+  if (card.version === 1) return renderUsage(card.state, paint, card.capturedAt, barWidth);
+  return aggregateCompactLines(card.states, paint, card.capturedAt, barWidth, card.currentProvider);
 }
 
 export function usageCardComponent(card: UsageCard | undefined, paint?: Paint): Component {

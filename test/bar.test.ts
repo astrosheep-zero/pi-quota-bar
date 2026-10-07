@@ -129,3 +129,47 @@ test('aggregate grid aligns bars, balance amounts and reset arrows across mixed 
   assert.equal(new Set(moneyColumns).size, 1, 'balance amounts must share one column');
   assert.ok(lines.some(line => line.includes('today $64.89')));
 });
+
+test('aggregate grid marks the current provider with a star and keeps columns aligned', async () => {
+  const { aggregateUsageLines } = await import('../src/bar/card.ts');
+  const window = (id: string, label: string, pct: number) => ({ ...state.snapshot.windows[0], id, label, remainingPercent: pct });
+  const states: Exclude<QuotaState, { kind: 'loading' }>[] = [
+    { kind: 'ready', provider: 'kimi', label: 'Kimi', snapshot: { fetchedAt: now, windows: [window('5h', '5h', 100), window('1w', '1w', 97)] } },
+    { kind: 'ready', provider: 'opencode-go', label: 'OpenCode Go', snapshot: { fetchedAt: now, windows: [window('5h', '5h', 100)] } },
+  ];
+  const lines = aggregateUsageLines(states, undefined, now, 12, 'kimi');
+  assert.ok(lines[0]!.startsWith('★ Kimi'), lines.join('\n'));
+  assert.equal(lines.some(line => line.includes('★ OpenCode')), false);
+  const barLines = lines.filter(line => line.includes('['));
+  const columns = barLines.map(line => visibleWidth(line.slice(0, line.indexOf('['))));
+  assert.equal(new Set(columns).size, 1, 'star must not break bar alignment');
+  // No current provider, no star.
+  assert.equal(aggregateUsageLines(states, undefined, now).some(line => line.includes('★')), false);
+});
+
+test('compact layout puts providers on header lines and never grows wide', async () => {
+  const { aggregateCompactLines } = await import('../src/bar/card.ts');
+  const window = (id: string, label: string, pct: number) => ({ ...state.snapshot.windows[0], id, label, remainingPercent: pct });
+  const states: Exclude<QuotaState, { kind: 'loading' }>[] = [
+    { kind: 'ready', provider: 'kimi', label: 'Kimi', snapshot: { fetchedAt: now, windows: [window('5h', '5h', 100), window('1w', '1w', 97)] } },
+    { kind: 'ready', provider: 'opencode-go', label: 'OpenCode Go (opencode-go-2)', snapshot: { fetchedAt: now, windows: [window('30d', '30d', 14)] } },
+    { kind: 'ready', provider: 'micu-ant', label: 'micu-ant', snapshot: { fetchedAt: now, windows: [], balance: { remaining: 41.12, currency: 'USD' } } },
+    { kind: 'error', provider: 'deepseek', label: 'DeepSeek', code: 'auth' },
+  ];
+  const lines = aggregateCompactLines(states, undefined, now, 6, 'kimi');
+  assert.deepEqual(lines.map(line => line.trimEnd()), [
+    '★ Kimi',
+    '  5h   [██████] 100%  ↺ 2h15m',
+    '  1w   [█████░]  97%  ↺ 2h15m',
+    '',
+    'OpenCode Go (opencode-go-2)',
+    '  30d  [█░░░░░]  14%  ↺ 2h15m',
+    '',
+    'micu-ant  $41.12',
+    '',
+    'DeepSeek  Sign in with /login',
+  ]);
+  assert.ok(lines.every(line => visibleWidth(line) <= 30), lines.join('\n'));
+  // Empty input keeps the helpful hint.
+  assert.deepEqual(aggregateCompactLines([], undefined, now), ['No quota data available. Run /usage --all for details.']);
+});

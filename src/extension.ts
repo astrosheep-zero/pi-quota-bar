@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { renderFooter } from './bar/quota.ts';
-import { captureAllUsage, USAGE_ENTRY, usageCardComponent, usageLines } from './bar/card.ts';
+import { captureAllUsage, USAGE_ENTRY, usageCardComponent, usageLines, compactUsageLines } from './bar/card.ts';
 import type { UsageCard } from './bar/card.ts';
 import { codexAdapter } from './query/codex.ts';
 import { createDeepSeekAdapter } from './query/deepseek.ts';
@@ -214,13 +214,17 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
           const getAuth = resolveAuth(ctx);
           const providers = supportedProviders(ctx);
           const states = await Promise.all(providers.map(provider => queryProvider(provider, getAuth)));
+          // The session's own provider always leads, whatever its health looks like.
+          const currentProvider = ctx.model?.provider;
           const ordered = states
             .map((state, index) => ({ state, index }))
             .sort((a, b) => {
+              const pinned = (item: { state: QuotaState }) =>
+                currentProvider !== undefined && 'provider' in item.state && item.state.provider === currentProvider ? 0 : 1;
               const rank = (state: QuotaState) => state.kind === 'error' ? 3
                 : state.kind === 'ready' && state.snapshot.windows.length > 0 ? 1
                 : 2;
-              return rank(a.state) - rank(b.state) || a.index - b.index;
+              return pinned(a) - pinned(b) || rank(a.state) - rank(b.state) || a.index - b.index;
             })
             .map(item => item.state);
           // Never append via a stale Pi runtime, or label a replacement model's data
@@ -228,12 +232,14 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
           if (!current || generation !== commandGeneration) return;
           const visibleStates = args.trim() === '--all'
             ? ordered : ordered.filter(state => state.kind === 'ready');
-          const card = captureAllUsage(visibleStates);
+          const card = captureAllUsage(visibleStates, Date.now(), currentProvider);
           hasUsageSnapshot = true;
           pi.appendEntry<UsageCard>(USAGE_ENTRY, card);
           // Custom entry renderers are TUI-only; RPC clients still get readable output.
+          // Fenced so clients that render markdown use a monospace font; compact
+          // layout because narrow clients (phones) wrap long grid lines anyway.
           if (ctx.mode !== 'tui') {
-            ctx.ui.notify(usageLines(card, undefined).join('\n'), 'info');
+            ctx.ui.notify(`\`\`\`\n${compactUsageLines(card, undefined).join('\n')}\n\`\`\``, 'info');
           }
         } finally {
           if (spinner) { clearInterval(spinner); spinner = undefined; }

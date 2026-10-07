@@ -184,6 +184,36 @@ test('/usage shows successful quota providers and --all reveals query errors', a
   assert.equal(diagnostic.includes('codex-for'), false);
 });
 
+test('/usage pins the current provider first and marks it with a star', async t => {
+  const adapter: QuotaAdapter = {
+    provider: 'my-gateway', label: 'Gateway',
+    async query({ now }) {
+      return { fetchedAt: now(), windows: [
+        { id: '1w', label: '1w', remainingPercent: 50, resetAt: now() + 3_600_000, durationSeconds: 604800 },
+      ] };
+    },
+  };
+  const h = harness('tui', [adapter]);
+  t.after(h.cleanup);
+  const registry = h.ctx.modelRegistry as unknown as { getAll: () => unknown[] };
+  registry.getAll = () => [h.ctx.model, { provider: 'my-gateway', id: 'gateway-model' }];
+  h.emit('session_start');
+  await tick();
+  // The current provider degrades to an error while the gateway stays healthy:
+  // rank ordering alone would bury it under the gateway and the other errors.
+  h.respondWith(async () => new Response('{}'));
+  await h.commands.get('usage')!.handler('--all', h.ctx);
+  const card = usageCardComponent(h.entries[0].data);
+  const lines = card.render(100);
+  const first = lines.find(line => line.trim().length > 0)!;
+  assert.ok(first.startsWith('★ Kimi'), lines.join('\n'));
+  assert.ok(first.includes('Unrecognized quota response'), first);
+  assert.ok(lines.findIndex(line => line.includes('Gateway')) > 0);
+  // The marker survives the session persistence round trip.
+  const restored = usageCardComponent(JSON.parse(JSON.stringify(h.entries[0])).data);
+  assert.ok(restored.render(100).some(line => line.startsWith('★ Kimi')));
+});
+
 for (const event of ['session_shutdown', 'model_select']) {
   test(`/usage does not append after ${event} during a query`, async t => {
     const h = harness();
@@ -218,7 +248,7 @@ test('new-api works through Pi auth, controller, footer and persistent /usage it
   await h.commands.get('usage')!.handler('', h.ctx);
   assert.equal(h.entries.length, 1);
   assert.deepEqual(usageCardComponent(h.entries[0].data).render(100).map(line => line.trimEnd()), [
-    'my-gateway  $12.34',
+    '★ my-gateway  $12.34', // current provider leads and carries the star
   ]);
 });
 
