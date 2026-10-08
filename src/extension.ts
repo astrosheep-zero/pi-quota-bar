@@ -236,10 +236,11 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
           hasUsageSnapshot = true;
           pi.appendEntry<UsageCard>(USAGE_ENTRY, card);
           // Custom entry renderers are TUI-only; RPC clients still get readable output.
-          // Fenced so clients that render markdown use a monospace font; compact
-          // layout because narrow clients (phones) wrap long grid lines anyway.
+          // No markdown fence: paseo routes notify to a plain-text Notification
+          // component (no markdown), so fence markers would show literally. The
+          // compact layout works as preserved-whitespace plain text on its own.
           if (ctx.mode !== 'tui') {
-            ctx.ui.notify(`\`\`\`\n${compactUsageLines(card, undefined).join('\n')}\n\`\`\``, 'info');
+            ctx.ui.notify(compactUsageLines(card, undefined).join('\n'), 'info');
           }
         } finally {
           if (spinner) { clearInterval(spinner); spinner = undefined; }
