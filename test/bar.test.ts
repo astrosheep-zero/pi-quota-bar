@@ -104,6 +104,20 @@ test('footer bounds window count, details retain model-specific windows', () => 
   assert.ok(renderUsage(extra, undefined, now).some(line => line.startsWith('  GPT-X/5h ')));
 });
 
+test('footer caps shared windows at two by default and honours footerWindows', () => {
+  const three: QuotaState = { ...state, snapshot: { ...state.snapshot, windows: [
+    ...state.snapshot.windows,
+    { ...state.snapshot.windows[0], id: 'monthly', label: '30d', durationSeconds: 2592000,
+      remainingPercent: 58, resetAt: now + 1641600000 },
+  ] } };
+  assert.ok(renderFooter(three, undefined, now).endsWith(' +1 '));
+  const all = renderFooter(three, undefined, now, 'all');
+  assert.ok(all.includes('5h ') && all.includes('1w ') && all.includes('30d '), all);
+  assert.equal(all.includes('+'), false);
+  assert.ok(renderFooter(three, undefined, now, 3).includes('30d '));
+  assert.equal(renderFooter(three, undefined, now, 1).includes('1w '), false);
+});
+
 test('aggregate grid aligns bars, balance amounts and reset arrows across mixed rows', async () => {
   const { aggregateUsageLines } = await import('../src/bar/card.ts');
   const window = (id: string, label: string, pct: number) => ({ ...state.snapshot.windows[0], id, label, remainingPercent: pct });

@@ -5,7 +5,7 @@ import { parseDeepSeekBalance } from '../src/query/deepseek.ts';
 import { QuotaError } from '../src/query/types.ts';
 import type { QueryContext, QuotaState } from '../src/query/types.ts';
 import { validateSnapshot } from '../src/query/registry.ts';
-import { loadQuotaAdaptersFromSettings, parseQuotaConfig, QuotaConfigError } from '../src/config.ts';
+import { loadQuotaAdaptersFromSettings, loadQuotaFooterWindows, parseQuotaConfig, QuotaConfigError } from '../src/config.ts';
 import { renderFooter, renderUsage } from '../src/bar/quota.ts';
 import { captureUsage, usageCardComponent } from '../src/bar/card.ts';
 
@@ -239,6 +239,12 @@ test('config binds explicit provider IDs and validates optional unit/currency se
   assert.equal(config.providers.deepseek.adapter, 'deepseek');
   assert.equal(config.providers.sub2.adapter, 'sub2api');
   assert.equal(config.providers.oc2.adapter, 'opencode-go');
+  assert.equal(parseQuotaConfig({ providers: {} }).footerWindows, undefined);
+  assert.equal(parseQuotaConfig({ footerWindows: 'all', providers: {} }).footerWindows, 'all');
+  assert.equal(parseQuotaConfig({ footerWindows: 3, providers: {} }).footerWindows, 3);
+  for (const footerWindows of [0, -1, 1.5, 'three', null, {}, []]) {
+    assert.throws(() => parseQuotaConfig({ footerWindows, providers: {} }), QuotaConfigError);
+  }
   for (const value of [null, {}, { providers: [] }, { providers: {}, apiKey: 'SECRET' },
     ...[{ adapter: 'billing' }, { adapter: 'new-api', quotaPerUnit: 0 },
       { adapter: 'new-api', quotaPerUnit: null }, { adapter: 'new-api', quotaPerUnit: '500000' },
@@ -336,6 +342,8 @@ test('settings loading is optional, namespaced, deterministic, and never exposes
     theme: 'dark', quotaUsage: { providers: { ctn: { adapter: 'new-api' }, micu: { adapter: 'new-api' }, sub: { adapter: 'sub2api' } } },
   });
   assert.deepEqual(adapters.map(adapter => adapter.provider), ['ctn', 'micu', 'sub']);
+  assert.equal(loadQuotaFooterWindows({ theme: 'dark' }), undefined);
+  assert.equal(loadQuotaFooterWindows({ quotaUsage: { footerWindows: 'all', providers: {} } }), 'all');
   assert.throws(() => loadQuotaAdaptersFromSettings({
     quotaUsage: { providers: { gateway: { adapter: 'new-api', apiKey: 'SECRET' } } },
   }), error => {

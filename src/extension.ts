@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { renderFooter } from './bar/quota.ts';
+import type { FooterWindows } from './bar/quota.ts';
 import { captureAllUsage, USAGE_ENTRY, usageCardComponent, usageLines, compactUsageLines } from './bar/card.ts';
 import type { UsageCard } from './bar/card.ts';
 import { codexAdapter } from './query/codex.ts';
@@ -23,6 +24,7 @@ export interface QuotaExtensionOptions {
   adapters?: readonly QuotaAdapter[];
   providers?: readonly string[]; // Extra configured quota providers to include in /usage
   footer?: boolean; // false: query + /usage + structured events only
+  footerWindows?: FooterWindows; // footer window cap; default 2, 'all' shows every window
   intervalMs?: number;
   timeoutMs?: number;
 }
@@ -57,7 +59,7 @@ export function createQuotaExtension(options: QuotaExtensionOptions = {}) {
         const ctx = current;
         const paint = process.env.NO_COLOR !== undefined ? undefined
           : (tone: Parameters<typeof ctx.ui.theme.fg>[0], text: string) => ctx.ui.theme.fg(tone, text);
-        const text = renderFooter(controller.state, paint) || undefined;
+        const text = renderFooter(controller.state, paint, Date.now(), options.footerWindows) || undefined;
         if (text !== lastStatus) {
           ctx.ui.setStatus(STATUS_KEY, text);
           lastStatus = text;

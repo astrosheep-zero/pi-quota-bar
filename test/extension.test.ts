@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { createQuotaExtension, SPINNER_INTERVAL_MS } from '../src/extension.ts';
+import type { FooterWindows } from '../src/bar/quota.ts';
 import { USAGE_ENTRY, usageCardComponent } from '../src/bar/card.ts';
 import type { UsageCard } from '../src/bar/card.ts';
 import { createNewApiAdapter } from '../src/query/new-api.ts';
@@ -10,7 +11,7 @@ import type { QuotaAdapter } from '../src/query/types.ts';
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
-function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
+function harness(mode = 'tui', adapters: QuotaAdapter[] = [], footerWindows?: FooterWindows) {
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
   const statuses: (string | undefined)[] = [];
@@ -48,7 +49,7 @@ function harness(mode = 'tui', adapters: QuotaAdapter[] = []) {
       getAll: () => ctx.model ? [ctx.model] : [],
     }, ui,
   } as unknown as ExtensionContext;
-  createQuotaExtension({ adapters })(pi);
+  createQuotaExtension({ adapters, footerWindows })(pi);
   return {
     ctx, ui, statuses, commands, emitted, entries, renderers, widgets,
     requests: () => requests,
@@ -103,6 +104,23 @@ test('an explicit adapter overrides a matching built-in provider', async t => {
   const text = usageCardComponent(h.entries[0]!.data).render(100).join('\n');
   assert.ok(text.includes('Configured DeepSeek'), text);
   assert.ok(text.includes('¥88.00'));
+});
+
+test('footerWindows: "all" shows every window of the current provider', async t => {
+  const h = harness('tui', [], 'all');
+  t.after(h.cleanup);
+  h.respondWith(async () => new Response(JSON.stringify({
+    usage: { limit: 100, used: 15, resetTime: '2099-01-01T00:00:00Z' },
+    limits: [
+      { window: { duration: 5, timeUnit: 'TIME_UNIT_HOUR' }, detail: { limit: 100, used: 28 } },
+      { window: { duration: 30, timeUnit: 'TIME_UNIT_DAY' }, detail: { limit: 100, used: 42 } },
+    ],
+  })));
+  h.emit('session_start');
+  await tick();
+  const footer = h.statuses.at(-1) ?? '';
+  assert.ok(footer.includes('5h ') && footer.includes('1w ') && footer.includes('30d '), footer);
+  assert.equal(footer.includes('+'), false);
 });
 
 test('noninteractive mode never queries or starts visible status work', async t => {
