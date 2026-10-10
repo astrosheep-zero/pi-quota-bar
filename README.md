@@ -18,7 +18,7 @@ Reload Pi after installing or changing settings. Use `/usage` for a persistent, 
 
 A percentage always means **remaining**, not used. Unknown is `[?] ?`; an expired reset is `↺ due` with the stale percentage hidden until the next successful query. A wallet balance never becomes a percentage. Historical spend is not a quota.
 
-The footer shows at most two windows and `+N` for additional ones, for the current provider only. `/usage` queries all configured supported providers and shows successful results with all windows, grouped by provider; it does not open a modal or send messages to the model. Snapshots remain frozen at capture time. Query failures replace stale values in the footer and appear in `/usage --all`.
+The footer shows at most two windows — set `quotaUsage.footerWindows` to a positive integer or `"all"` to show more — and `+N` for additional ones, for the current provider only. `/usage` queries all configured supported providers and shows successful results with all windows, grouped by provider; it does not open a modal or send messages to the model. Snapshots remain frozen at capture time. Query failures replace stale values in the footer and appear in `/usage --all`.
 
 ## Configure providers
 

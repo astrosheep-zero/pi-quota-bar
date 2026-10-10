@@ -1,11 +1,13 @@
 import { getAgentDir, SettingsManager } from '@earendil-works/pi-coding-agent';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createQuotaExtension } from './extension.ts';
-import { loadQuotaAdaptersFromSettings, QuotaConfigError } from './config.ts';
+import { loadQuotaAdaptersFromSettings, loadQuotaFooterWindows, QuotaConfigError } from './config.ts';
+import type { FooterWindows } from './bar/quota.ts';
 import type { QuotaAdapter } from './query/types.ts';
 
 export default function (pi: ExtensionAPI): void {
   let adapters: QuotaAdapter[] = [];
+  let footerWindows: FooterWindows | undefined;
   try {
     // Quota provider bindings belong to the user's global Pi settings. Project
     // settings are intentionally not read here: a project must not redirect a
@@ -14,11 +16,12 @@ export default function (pi: ExtensionAPI): void {
       projectTrusted: false,
     }).getGlobalSettings() as unknown;
     adapters = loadQuotaAdaptersFromSettings(settings);
+    footerWindows = loadQuotaFooterWindows(settings);
   } catch {
     pi.on('session_start', (_event, ctx) => {
       if (ctx.hasUI) ctx.ui.notify(new QuotaConfigError().message, 'warning');
     });
   }
   // Invalid optional settings never disable the built-in Codex/Kimi/OpenCode Go adapters.
-  createQuotaExtension({ adapters })(pi);
+  createQuotaExtension({ adapters, footerWindows })(pi);
 }

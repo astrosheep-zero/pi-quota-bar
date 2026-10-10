@@ -24,14 +24,18 @@ function windowSpans(window: QuotaWindow, now: number): Span[] {
   ];
 }
 
-export function quotaElement(state: QuotaState, now = Date.now()): BarElement {
+// Footer window cap: a positive count, or 'all' for every shared window.
+export type FooterWindows = number | 'all';
+
+export function quotaElement(state: QuotaState, now = Date.now(), maxWindows: FooterWindows = 2): BarElement {
   const element: BarElement = { id: 'quota', spans: [] };
   if (state.kind === 'hidden') return element;
   if (state.kind === 'loading') return { ...element, spans: [{ text: 'Quota …', tone: 'dim' }] };
   if (state.kind === 'error') return { ...element, spans: [{ text: `Quota ! ${errorText[state.code]}`, tone: 'warning' }] };
   const windows = state.snapshot.windows;
   const shared = windows.filter(window => !window.scope);
-  const shown = (shared.length ? shared : windows).slice(0, 2);
+  const eligible = shared.length ? shared : windows;
+  const shown = maxWindows === 'all' ? eligible : eligible.slice(0, maxWindows);
   const spans: Span[] = state.snapshot.balance ? balanceSpans(state.snapshot.balance)
     : state.snapshot.allowance ? allowanceSpans(state.snapshot.allowance) : [];
   for (const window of shown) {
@@ -42,8 +46,8 @@ export function quotaElement(state: QuotaState, now = Date.now()): BarElement {
   return { ...element, spans };
 }
 
-export function renderFooter(state: QuotaState, paint: Paint = plain, now = Date.now()): string {
-  return renderBar([quotaElement(state, now)], paint);
+export function renderFooter(state: QuotaState, paint: Paint = plain, now = Date.now(), maxWindows: FooterWindows = 2): string {
+  return renderBar([quotaElement(state, now, maxWindows)], paint);
 }
 
 export function renderUsage(state: QuotaState, paint: Paint = plain, now = Date.now(), barWidth = 16): string[] {

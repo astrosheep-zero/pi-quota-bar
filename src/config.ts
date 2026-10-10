@@ -6,12 +6,13 @@ import { createYesCodeAdapter, validateYesCodeOptions } from './query/yescode.ts
 import type { NewApiOptions } from './query/new-api.ts';
 import type { YesCodeOptions } from './query/yescode.ts';
 import type { QuotaAdapter } from './query/types.ts';
+import type { FooterWindows } from './bar/quota.ts';
 
 export type ProviderQuotaConfig =
   | ({ adapter: 'new-api'; quotaPerUnit: number; currency: string } & Pick<NewApiOptions, 'dashboardAccessToken' | 'dashboardUserId'>)
   | ({ adapter: 'yescode' } & YesCodeOptions)
   | { adapter: 'deepseek' | 'sub2api' | 'opencode-go' };
-export interface QuotaConfig { providers: Record<string, ProviderQuotaConfig> }
+export interface QuotaConfig { providers: Record<string, ProviderQuotaConfig>; footerWindows?: FooterWindows }
 
 const DASHBOARD_KEYS = ['dashboardAccessToken', 'dashboardUserId'] as const;
 
@@ -29,10 +30,16 @@ function parseDashboardOptions(item: Record<string, unknown>): Pick<NewApiOption
   return result;
 }
 
+function parseFooterWindows(value: unknown): FooterWindows {
+  if (value === 'all') return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 1) return value;
+  throw new QuotaConfigError();
+}
+
 export class QuotaConfigError extends Error {
   constructor() {
     // Settings may accidentally contain secrets. Never echo content/values.
-    super('Invalid settings.json quotaUsage. Use providers with adapter "new-api", "deepseek", "sub2api", "opencode-go" or "yescode".');
+    super('Invalid settings.json quotaUsage. Use providers with adapter "new-api", "deepseek", "sub2api", "opencode-go" or "yescode", and optionally footerWindows as a positive integer or "all".');
   }
 }
 
@@ -41,7 +48,7 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 export function parseQuotaConfig(value: unknown): QuotaConfig {
-  if (!record(value) || Object.keys(value).some(key => key !== 'providers')
+  if (!record(value) || Object.keys(value).some(key => key !== 'providers' && key !== 'footerWindows')
     || !record(value.providers) || Object.keys(value.providers).length > 64) throw new QuotaConfigError();
   const providers: Record<string, ProviderQuotaConfig> = Object.create(null);
   for (const [provider, item] of Object.entries(value.providers)) {
@@ -76,7 +83,14 @@ export function parseQuotaConfig(value: unknown): QuotaConfig {
       providers[provider] = { adapter: 'new-api', ...settings, ...parseDashboardOptions(item) };
     } catch { throw new QuotaConfigError(); }
   }
-  return { providers };
+  const config: QuotaConfig = { providers };
+  if (value.footerWindows !== undefined) config.footerWindows = parseFooterWindows(value.footerWindows);
+  return config;
+}
+
+export function loadQuotaFooterWindows(settings: unknown): FooterWindows | undefined {
+  if (!record(settings) || settings.quotaUsage === undefined) return undefined;
+  return parseQuotaConfig(settings.quotaUsage).footerWindows;
 }
 
 export function loadQuotaAdaptersFromSettings(settings: unknown): QuotaAdapter[] {
